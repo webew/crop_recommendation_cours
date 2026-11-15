@@ -23,17 +23,21 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `etape-2` | Versionnage des données | DVC : données hors de Git, stockage local |
 | `etape-3` | Du notebook au paquet | `data.py` : chargement validé, découpage, plis de validation croisée |
 | `etape-4` | Tests et qualité du code | pytest, Ruff |
+| `etape-5` | Entraînement en script | `uv run tune`, `uv run train`, runs tracés dans MLflow |
 
 ## Contenu
 
 | Élément | Rôle |
 | --- | --- |
 | `pyproject.toml`, `uv.lock`, `.python-version` | Projet Python et versions exactes des dépendances |
-| `config/config.yaml` | Réglages : données, découpage, MLflow, grille de recherche |
+| `config/config.yaml` | Réglages : données, découpage, MLflow, hyperparamètres du modèle, grille de recherche |
 | `config/schema.yaml` | Schéma des données : colonnes, types, bornes, cultures autorisées |
 | `src/crop_recommendation_tp/config.py` | Lecture des fichiers YAML |
 | `src/crop_recommendation_tp/validation.py` | Contrôle d'un tableau par rapport au schéma |
-| `src/crop_recommendation_tp/data.py` | Chargement et validation des données, variables explicatives, découpage, plis de validation croisée |
+| `src/crop_recommendation_tp/data.py` | Chargement et validation des données, variables explicatives, découpage, plis de validation croisée, empreinte des données |
+| `src/crop_recommendation_tp/tracking.py` | Connexion à MLflow, enregistrement des runs |
+| `src/crop_recommendation_tp/tune.py` | Commande `tune` : recherche des hyperparamètres |
+| `src/crop_recommendation_tp/train.py` | Commande `train` : entraînement et évaluation du modèle |
 | `data/raw/crop_recommendation.csv.dvc` | Étiquette DVC des données : empreinte md5 et taille |
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles), gérées par DVC et ignorées par Git |
 | `.dvc/config` | Configuration de DVC, dont l'adresse du stockage |
@@ -118,6 +122,30 @@ uv run python -c "import pandas as pd; from crop_recommendation_tp.config import
 
 Résultat attendu : `[]`.
 
+## Entraîner un modèle
+
+Le serveur MLflow doit être démarré.
+
+```bash
+uv run tune     # occasionnel : compare les combinaisons de tuning.param_grid en validation croisée
+uv run train    # entraîne le modèle avec model.params et enregistre un run
+```
+
+1. `tune` affiche la meilleure combinaison et enregistre un run « tuning » (un run enfant par combinaison) dans l'expérience `crop-recommendation`.
+2. On reporte la meilleure combinaison dans `model.params` de `config/config.yaml`, puis on commite.
+3. `train` charge et valide les données, les découpe, entraîne le modèle, mesure le score en validation croisée et sur le jeu de test, puis enregistre un run.
+
+Chaque run de `train` enregistre :
+
+| Élément | Contenu |
+| --- | --- |
+| Paramètres | réglages du modèle, part du jeu de test |
+| Métriques | `cv_f1_macro_mean`, `cv_f1_macro_std`, `accuracy`, `f1_macro` |
+| Tags | `data_md5` (empreinte des données), `git_commit` (commit du code) |
+| Artefacts | `config.yaml`, `schema.yaml`, rapport de classification, matrice de confusion, modèle |
+
+Le suffixe `-dirty` de `git_commit` signale des modifications non commitées ; le suffixe `-modified` de `data_md5`, des données différentes de l'étiquette `.dvc`. Commiter avant d'entraîner un modèle que l'on veut garder.
+
 ## Tests et qualité du code
 
 ```bash
@@ -130,6 +158,7 @@ uv run ruff format --check .  # mise en forme
 | --- | --- | --- |
 | `tests/test_validation.py` | 9 | Règles du schéma : colonnes, types, valeurs manquantes, bornes, cultures autorisées |
 | `tests/test_data.py` | 4 | Variables explicatives, découpage stratifié et reproductible, plis de validation croisée |
+| `tests/test_train.py` | 1 | `train` et `tune` donnent le même score pour les mêmes réglages |
 
 Les tests utilisent de petits tableaux fabriqués : ils s'exécutent sans les données et sans MLflow.
 

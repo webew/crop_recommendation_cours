@@ -1,3 +1,5 @@
+import hashlib
+
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
@@ -40,3 +42,14 @@ def build_cv(config: dict) -> StratifiedKFold:
         shuffle=True,
         random_state=config["split"]["random_seed"],
     )
+
+
+def get_data_version(config: dict) -> str:
+    """Retourne l'empreinte md5 du fichier de données utilisé.
+
+    Le suffixe -modified signale un fichier différent de celui enregistré dans le .dvc.
+    """
+    dvc_file = load_yaml(config["dataset"]["path"] + ".dvc")
+    expected = dvc_file["outs"][0]["md5"]
+    actual = hashlib.md5((ROOT / config["dataset"]["path"]).read_bytes()).hexdigest()
+    return actual if actual == expected else actual + "-modified"
