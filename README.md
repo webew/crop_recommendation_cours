@@ -28,6 +28,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `etape-7` | Serveur MLflow | Docker Compose : MLflow et PostgreSQL |
 | `etape-8` | Registre et promotion | `uv run promote`, alias `champion` |
 | `etape-9` | API de prédiction | FastAPI : `/health`, `/predict` |
+| `etape-10` | API en conteneur | `Dockerfile.api`, service `api` dans Docker Compose |
 
 ## Contenu
 
@@ -51,7 +52,9 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `tests/` | Tests automatisés (pytest) |
 | `.vscode/settings.json` | Ruff à l'enregistrement dans VS Code |
 | `.github/workflows/ci.yml` | Intégration continue (GitHub Actions) |
-| `compose.yaml`, `Dockerfile.mlflow` | Serveur MLflow et base PostgreSQL (Docker Compose) |
+| `compose.yaml` | Services Docker : PostgreSQL, serveur MLflow, API |
+| `Dockerfile.mlflow`, `Dockerfile.api` | Images du serveur MLflow et de l'API |
+| `.dockerignore` | Fichiers exclus des images (secrets, données, environnement) |
 | `.env.example` | Modèle du fichier des secrets `.env` (ignoré par Git) |
 
 ## Prérequis
@@ -61,7 +64,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | [Git](https://git-scm.com/) | Historique du code |
 | [uv](https://docs.astral.sh/uv/) | Python, environnement virtuel et dépendances |
 | [VS Code](https://code.visualstudio.com/) | Éditeur, avec les extensions *Python*, *Jupyter* et *Ruff* |
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Serveur MLflow et base PostgreSQL |
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Serveur MLflow, base PostgreSQL et API |
 
 La version de Python (3.13) est indiquée dans `.python-version` : uv l'installe si nécessaire.
 
@@ -77,7 +80,7 @@ uv sync
 
 ## Démarrer MLflow
 
-Le serveur MLflow et sa base PostgreSQL tournent dans Docker (`compose.yaml`).
+Le serveur MLflow, sa base PostgreSQL et l'API tournent dans Docker (`compose.yaml`).
 
 Première fois : créer le fichier des secrets, puis y renseigner `POSTGRES_PASSWORD`.
 
@@ -89,17 +92,19 @@ Démarrage :
 
 ```bash
 docker compose up -d --build
-docker compose ps            # les deux services doivent être « healthy »
+docker compose ps            # les services doivent être « healthy »
 ```
 
-- Interface : <http://127.0.0.1:5001>. Le port est publié sur `127.0.0.1` seulement ; la variable `MLFLOW_PORT` permet d'en choisir un autre.
+- Interface MLflow : <http://127.0.0.1:5001> ; API : <http://127.0.0.1:8000/docs>. Les ports sont publiés sur `127.0.0.1` seulement ; les variables `MLFLOW_PORT` et `API_PORT` permettent d'en choisir d'autres.
+- Au premier démarrage, le registre est vide : l'API s'arrête, avec un message qui demande de lancer `uv run train` puis `uv run promote`. La relancer ensuite avec `docker compose restart api`.
 - Les essais sont conservés dans deux volumes Docker : `postgres_data` (paramètres, métriques) et `mlflow_artifacts` (modèles, figures, rapports).
 - Les essais enregistrés auparavant dans le serveur local (`mlflow.db`) ne sont pas repris : relancer le notebook et `uv run train`.
 
 | Commande | Effet |
 | --- | --- |
 | `docker compose ps` | État des services |
-| `docker compose logs --tail 20 mlflow` | Dernières lignes du journal |
+| `docker compose logs --tail 20 api` | Dernières lignes du journal d'un service |
+| `docker compose restart api` | Recharger le champion dans l'API |
 | `docker compose down` | Arrêt ; les essais sont conservés |
 | `docker compose down -v` | Arrêt **et suppression** des essais |
 
@@ -200,8 +205,13 @@ Dans l'interface MLflow, l'alias se voit dans *Model registry* (barre de navigat
 
 Au démarrage, l'API demande au registre la version qui porte l'alias `champion` et charge ce modèle en mémoire. Prérequis : serveur MLflow démarré et champion existant (`uv run train`, puis `uv run promote`).
 
+L'API tourne dans le conteneur `api` (section « Démarrer MLflow ») : <http://127.0.0.1:8000/docs>. Elle joint MLflow par son nom dans le réseau Docker (`MLFLOW_TRACKING_URI=http://mlflow:5000`) ; l'option `--allowed-hosts` du serveur MLflow autorise ce nom.
+
+Pour développer l'API sans reconstruire l'image :
+
 ```bash
-uv run fastapi dev           # http://127.0.0.1:8000 · documentation interactive : /docs
+docker compose stop api      # libérer le port 8000
+uv run fastapi dev           # rechargement automatique à chaque modification du code
 ```
 
 `fastapi dev` trouve l'application grâce à `[tool.fastapi]` dans `pyproject.toml`.
@@ -220,7 +230,7 @@ curl -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" \
 ```
 
 - Les entrées sont validées d'après `config/schema.yaml` : une valeur hors bornes ou une variable absente renvoie une erreur **422**.
-- Le modèle est chargé au démarrage : après une promotion, relancer l'API.
+- Le modèle est chargé au démarrage : après une promotion, `docker compose restart api`.
 - Sans champion, l'API refuse de démarrer, avec un message qui demande de lancer `uv run train` puis `uv run promote`.
 
 ## Tests et qualité du code
@@ -262,6 +272,8 @@ uv run pytest
 | `Connection refused` dans le notebook ou les scripts | Serveur MLflow arrêté | `docker compose up -d` |
 | `port is already allocated` au démarrage | Port 5001 déjà utilisé, par exemple par le serveur local des étapes précédentes | Arrêter ce serveur (`Ctrl+C`), ou choisir un autre port : `MLFLOW_PORT=5003 docker compose up -d`, à reporter dans `mlflow.tracking_uri` de `config/config.yaml` |
 | `env file … .env not found` | Fichier des secrets absent | `cp .env.example .env`, puis renseigner `POSTGRES_PASSWORD` |
+| Le service `api` s'arrête : `Alias champion introuvable…` | Registre sans champion | `uv run train`, `uv run promote`, puis `docker compose restart api` |
+| `403` et `Invalid Host header` dans le journal de l'API | Nom d'hôte non autorisé par MLflow | Ajouter ce nom à `--allowed-hosts` dans `compose.yaml` |
 | `ModuleNotFoundError: crop_recommendation_tp` | Noyau du notebook différent de `.venv` | Sélectionner le noyau `.venv`, puis relancer |
 | `FileNotFoundError: 'config/config.yaml'` | Le notebook ne tourne pas depuis la racine du projet | Redémarrer le noyau et relancer toutes les cellules |
 | `FileNotFoundError: … crop_recommendation.csv` après `git checkout etape-2` | Données retirées de Git, stockage DVC absent | Section « Première mise en place » |
