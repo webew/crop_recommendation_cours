@@ -27,6 +27,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `etape-6` | Intégration continue | GitHub Actions : Ruff et tests à chaque push |
 | `etape-7` | Serveur MLflow | Docker Compose : MLflow et PostgreSQL |
 | `etape-8` | Registre et promotion | `uv run promote`, alias `champion` |
+| `etape-9` | API de prédiction | FastAPI : `/health`, `/predict` |
 
 ## Contenu
 
@@ -42,6 +43,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `src/crop_recommendation_tp/tune.py` | Commande `tune` : recherche des hyperparamètres |
 | `src/crop_recommendation_tp/train.py` | Commande `train` : entraînement et évaluation du modèle |
 | `src/crop_recommendation_tp/promote.py` | Commande `promote` : choix du modèle champion |
+| `src/crop_recommendation_tp/api.py` | API de prédiction, qui sert le modèle champion |
 | `data/raw/crop_recommendation.csv.dvc` | Étiquette DVC des données : empreinte md5 et taille |
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles), gérées par DVC et ignorées par Git |
 | `.dvc/config` | Configuration de DVC, dont l'adresse du stockage |
@@ -194,6 +196,33 @@ Le nom du modèle et celui de l'alias se trouvent dans la section `mlflow` de `c
 
 Dans l'interface MLflow, l'alias se voit dans *Model registry* (barre de navigation de gauche), colonne *Aliased versions*. L'onglet *Models* d'une expérience liste les modèles enregistrés par les runs : ils n'ont jamais d'alias.
 
+## API de prédiction
+
+Au démarrage, l'API demande au registre la version qui porte l'alias `champion` et charge ce modèle en mémoire. Prérequis : serveur MLflow démarré et champion existant (`uv run train`, puis `uv run promote`).
+
+```bash
+uv run fastapi dev           # http://127.0.0.1:8000 · documentation interactive : /docs
+```
+
+`fastapi dev` trouve l'application grâce à `[tool.fastapi]` dans `pyproject.toml`.
+
+| Route | Rôle |
+| --- | --- |
+| `GET /health` | État de l'API, version et run du modèle chargé |
+| `POST /predict` | Culture recommandée pour 7 mesures |
+| `GET /docs` | Documentation interactive |
+
+```bash
+curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" \
+     -d '{"N": 90, "P": 42, "K": 43, "temperature": 20.8, "humidity": 82.0, "ph": 6.5, "rainfall": 202.9}'
+# → {"culture": "rice", "version": "1"}
+```
+
+- Les entrées sont validées d'après `config/schema.yaml` : une valeur hors bornes ou une variable absente renvoie une erreur **422**.
+- Le modèle est chargé au démarrage : après une promotion, relancer l'API.
+- Sans champion, l'API refuse de démarrer, avec un message qui demande de lancer `uv run train` puis `uv run promote`.
+
 ## Tests et qualité du code
 
 ```bash
@@ -208,6 +237,7 @@ uv run ruff format --check .  # mise en forme
 | `tests/test_data.py` | 4 | Variables explicatives, découpage stratifié et reproductible, plis de validation croisée |
 | `tests/test_train.py` | 1 | `train` et `tune` donnent le même score pour les mêmes réglages |
 | `tests/test_promote.py` | 11 | Règle de promotion, dans tous les cas du tableau ci-dessus |
+| `tests/test_api.py` | 5 | Routes `/health` et `/predict`, erreurs 422, démarrage sans champion |
 
 Les tests utilisent de petits tableaux fabriqués et une base MLflow SQLite temporaire (fixture `config` de `tests/conftest.py`) : ils s'exécutent sans les données, sans Docker et sans serveur MLflow.
 
