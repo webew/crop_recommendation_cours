@@ -14,7 +14,7 @@ uv run dvc pull             # à partir de l'étape 2 : restaure les données g�
 
 La première fois qu'on atteint l'étape 2, le stockage DVC n'existe pas encore : suivre la section « Première mise en place » avant `dvc pull`.
 
-Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis par Git : ils sont conservés d'une étape à l'autre.
+Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape à l'autre.
 
 | Étiquette | Étape | Apport |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `etape-4` | Tests et qualité du code | pytest, Ruff |
 | `etape-5` | Entraînement en script | `uv run tune`, `uv run train`, runs tracés dans MLflow |
 | `etape-6` | Intégration continue | GitHub Actions : Ruff et tests à chaque push |
+| `etape-7` | Serveur MLflow | Docker Compose : MLflow et PostgreSQL |
 
 ## Contenu
 
@@ -46,6 +47,8 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `tests/` | Tests automatisés (pytest) |
 | `.vscode/settings.json` | Ruff à l'enregistrement dans VS Code |
 | `.github/workflows/ci.yml` | Intégration continue (GitHub Actions) |
+| `compose.yaml`, `Dockerfile.mlflow` | Serveur MLflow et base PostgreSQL (Docker Compose) |
+| `.env.example` | Modèle du fichier des secrets `.env` (ignoré par Git) |
 
 ## Prérequis
 
@@ -54,6 +57,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | [Git](https://git-scm.com/) | Historique du code |
 | [uv](https://docs.astral.sh/uv/) | Python, environnement virtuel et dépendances |
 | [VS Code](https://code.visualstudio.com/) | Éditeur, avec les extensions *Python*, *Jupyter* et *Ruff* |
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Serveur MLflow et base PostgreSQL |
 
 La version de Python (3.13) est indiquée dans `.python-version` : uv l'installe si nécessaire.
 
@@ -69,15 +73,31 @@ uv sync
 
 ## Démarrer MLflow
 
-Dans un terminal dédié, à la racine du projet :
+Le serveur MLflow et sa base PostgreSQL tournent dans Docker (`compose.yaml`).
+
+Première fois : créer le fichier des secrets, puis y renseigner `POSTGRES_PASSWORD`.
 
 ```bash
-uv run mlflow server --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1 --port 5001
+cp .env.example .env        # Windows (PowerShell) : Copy-Item .env.example .env
 ```
 
-- Interface : <http://127.0.0.1:5001>
-- Le terminal reste occupé tant que le serveur tourne ; `Ctrl+C` l'arrête.
-- Les essais sont conservés dans `mlflow.db` et `mlartifacts/`, à la racine du projet. Ces fichiers ne sont pas versionnés.
+Démarrage :
+
+```bash
+docker compose up -d --build
+docker compose ps            # les deux services doivent être « healthy »
+```
+
+- Interface : <http://127.0.0.1:5001>. Le port est publié sur `127.0.0.1` seulement ; la variable `MLFLOW_PORT` permet d'en choisir un autre.
+- Les essais sont conservés dans deux volumes Docker : `postgres_data` (paramètres, métriques) et `mlflow_artifacts` (modèles, figures, rapports).
+- Les essais enregistrés auparavant dans le serveur local (`mlflow.db`) ne sont pas repris : relancer le notebook et `uv run train`.
+
+| Commande | Effet |
+| --- | --- |
+| `docker compose ps` | État des services |
+| `docker compose logs --tail 20 mlflow` | Dernières lignes du journal |
+| `docker compose down` | Arrêt ; les essais sont conservés |
+| `docker compose down -v` | Arrêt **et suppression** des essais |
 
 ## Exécuter le notebook
 
@@ -182,8 +202,9 @@ uv run pytest
 
 | Message ou symptôme | Cause | Solution |
 | --- | --- | --- |
-| `Connection refused` dans le notebook | Serveur MLflow arrêté | Démarrer MLflow (section précédente) |
-| `Address already in use` au démarrage de MLflow | Port 5001 déjà utilisé | Choisir un autre port (`--port 5003`) et le reporter dans `mlflow.tracking_uri` de `config/config.yaml` |
+| `Connection refused` dans le notebook ou les scripts | Serveur MLflow arrêté | `docker compose up -d` |
+| `port is already allocated` au démarrage | Port 5001 déjà utilisé, par exemple par le serveur local des étapes précédentes | Arrêter ce serveur (`Ctrl+C`), ou choisir un autre port : `MLFLOW_PORT=5003 docker compose up -d`, à reporter dans `mlflow.tracking_uri` de `config/config.yaml` |
+| `env file … .env not found` | Fichier des secrets absent | `cp .env.example .env`, puis renseigner `POSTGRES_PASSWORD` |
 | `ModuleNotFoundError: crop_recommendation_tp` | Noyau du notebook différent de `.venv` | Sélectionner le noyau `.venv`, puis relancer |
 | `FileNotFoundError: 'config/config.yaml'` | Le notebook ne tourne pas depuis la racine du projet | Redémarrer le noyau et relancer toutes les cellules |
 | `FileNotFoundError: … crop_recommendation.csv` après `git checkout etape-2` | Données retirées de Git, stockage DVC absent | Section « Première mise en place » |

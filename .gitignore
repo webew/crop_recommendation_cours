@@ -8,6 +8,9 @@ dist/
 # Environnement virtuel
 .venv
 
+# Secrets (modèle : .env.example)
+.env
+
 # MLflow (base et artefacts locaux)
 mlflow.db
 mlruns/
