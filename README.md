@@ -24,6 +24,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `etape-3` | Du notebook au paquet | `data.py` : chargement validé, découpage, plis de validation croisée |
 | `etape-4` | Tests et qualité du code | pytest, Ruff |
 | `etape-5` | Entraînement en script | `uv run tune`, `uv run train`, runs tracés dans MLflow |
+| `etape-6` | Intégration continue | GitHub Actions : Ruff et tests à chaque push |
 
 ## Contenu
 
@@ -44,6 +45,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `notebooks/01_demarche_modelisation.ipynb` | Démarche de modélisation, essais enregistrés dans MLflow |
 | `tests/` | Tests automatisés (pytest) |
 | `.vscode/settings.json` | Ruff à l'enregistrement dans VS Code |
+| `.github/workflows/ci.yml` | Intégration continue (GitHub Actions) |
 
 ## Prérequis
 
@@ -163,6 +165,18 @@ uv run ruff format --check .  # mise en forme
 Les tests utilisent de petits tableaux fabriqués : ils s'exécutent sans les données et sans MLflow.
 
 `uv run ruff check . --fix` et `uv run ruff format .` corrigent automatiquement la plupart des écarts. Dans VS Code, avec l'extension Ruff, `.vscode/settings.json` trie les imports, applique les corrections et met en forme le code à chaque enregistrement.
+
+## Intégration continue
+
+Le workflow `.github/workflows/ci.yml` s'exécute à chaque `push` et `pull_request`, sur une machine neuve. Il installe l'environnement exact (`uv sync --locked`), puis lance :
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+```
+
+`uv sync --locked` échoue si `uv.lock` ne correspond pas à `pyproject.toml`. Avant chaque commit, lancer les trois mêmes commandes en local. Résultat des exécutions : onglet *Actions* du dépôt GitHub, ou `gh run list`.
 
 ## Résolution de problèmes
 
