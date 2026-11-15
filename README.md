@@ -2,6 +2,8 @@
 
 Projet support du cours : recommander une culture (22 classes) à partir de 7 mesures du sol et du climat, puis industrialiser la démarche étape par étape.
 
+**Manuel étudiant** : [`docs/manuel_etudiant.md`](docs/manuel_etudiant.md). Notions, lecture commentée du code et manipulations, étape par étape, pour suivre le cours en autonomie.
+
 ## Étapes
 
 Chaque étape correspond à un commit et à une étiquette Git. Pour passer à une étape donnée :
