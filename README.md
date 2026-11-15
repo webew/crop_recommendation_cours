@@ -22,6 +22,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `etape-1` | Validation des données | schéma des données, fonction `validate` |
 | `etape-2` | Versionnage des données | DVC : données hors de Git, stockage local |
 | `etape-3` | Du notebook au paquet | `data.py` : chargement validé, découpage, plis de validation croisée |
+| `etape-4` | Tests et qualité du code | pytest, Ruff |
 
 ## Contenu
 
@@ -37,6 +38,8 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles), gérées par DVC et ignorées par Git |
 | `.dvc/config` | Configuration de DVC, dont l'adresse du stockage |
 | `notebooks/01_demarche_modelisation.ipynb` | Démarche de modélisation, essais enregistrés dans MLflow |
+| `tests/` | Tests automatisés (pytest) |
+| `.vscode/settings.json` | Ruff à l'enregistrement dans VS Code |
 
 ## Prérequis
 
@@ -44,7 +47,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | --- | --- |
 | [Git](https://git-scm.com/) | Historique du code |
 | [uv](https://docs.astral.sh/uv/) | Python, environnement virtuel et dépendances |
-| [VS Code](https://code.visualstudio.com/) | Éditeur, avec les extensions *Python* et *Jupyter* |
+| [VS Code](https://code.visualstudio.com/) | Éditeur, avec les extensions *Python*, *Jupyter* et *Ruff* |
 
 La version de Python (3.13) est indiquée dans `.python-version` : uv l'installe si nécessaire.
 
@@ -114,6 +117,23 @@ uv run python -c "import pandas as pd; from crop_recommendation_tp.config import
 ```
 
 Résultat attendu : `[]`.
+
+## Tests et qualité du code
+
+```bash
+uv run pytest                 # tests automatisés
+uv run ruff check .           # erreurs probables, ordre des imports
+uv run ruff format --check .  # mise en forme
+```
+
+| Fichier | Tests | Ce qui est vérifié |
+| --- | --- | --- |
+| `tests/test_validation.py` | 9 | Règles du schéma : colonnes, types, valeurs manquantes, bornes, cultures autorisées |
+| `tests/test_data.py` | 4 | Variables explicatives, découpage stratifié et reproductible, plis de validation croisée |
+
+Les tests utilisent de petits tableaux fabriqués : ils s'exécutent sans les données et sans MLflow.
+
+`uv run ruff check . --fix` et `uv run ruff format .` corrigent automatiquement la plupart des écarts. Dans VS Code, avec l'extension Ruff, `.vscode/settings.json` trie les imports, applique les corrections et met en forme le code à chaque enregistrement.
 
 ## Résolution de problèmes
 
