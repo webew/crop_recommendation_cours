@@ -26,6 +26,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `etape-5` | Entraînement en script | `uv run tune`, `uv run train`, runs tracés dans MLflow |
 | `etape-6` | Intégration continue | GitHub Actions : Ruff et tests à chaque push |
 | `etape-7` | Serveur MLflow | Docker Compose : MLflow et PostgreSQL |
+| `etape-8` | Registre et promotion | `uv run promote`, alias `champion` |
 
 ## Contenu
 
@@ -40,6 +41,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `src/crop_recommendation_tp/tracking.py` | Connexion à MLflow, enregistrement des runs |
 | `src/crop_recommendation_tp/tune.py` | Commande `tune` : recherche des hyperparamètres |
 | `src/crop_recommendation_tp/train.py` | Commande `train` : entraînement et évaluation du modèle |
+| `src/crop_recommendation_tp/promote.py` | Commande `promote` : choix du modèle champion |
 | `data/raw/crop_recommendation.csv.dvc` | Étiquette DVC des données : empreinte md5 et taille |
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles), gérées par DVC et ignorées par Git |
 | `.dvc/config` | Configuration de DVC, dont l'adresse du stockage |
@@ -163,10 +165,34 @@ Chaque run de `train` enregistre :
 | --- | --- |
 | Paramètres | réglages du modèle, part du jeu de test |
 | Métriques | `cv_f1_macro_mean`, `cv_f1_macro_std`, `accuracy`, `f1_macro` |
-| Tags | `data_md5` (empreinte des données), `git_commit` (commit du code) |
+| Tags | `data_md5` (empreinte des données), `git_commit` (commit du code), `stage = candidate` |
 | Artefacts | `config.yaml`, `schema.yaml`, rapport de classification, matrice de confusion, modèle |
 
 Le suffixe `-dirty` de `git_commit` signale des modifications non commitées ; le suffixe `-modified` de `data_md5`, des données différentes de l'étiquette `.dvc`. Commiter avant d'entraîner un modèle que l'on veut garder.
+
+## Registre et promotion
+
+Le registre MLflow conserve les versions du modèle `crop-recommendation`. L'alias `champion` désigne la version de référence.
+
+```bash
+uv run train      # entraîne un candidat (run étiqueté stage = candidate)
+uv run promote    # compare le dernier candidat au champion
+```
+
+`promote` compare le score de validation croisée (`cv_f1_macro_mean`) du dernier candidat à celui du champion :
+
+| Situation | Résultat |
+| --- | --- |
+| Aucun run candidat | Message : lancer d'abord `uv run train` |
+| Le candidat n'a pas la métrique | Message, aucune promotion |
+| Registre sans champion | Candidat promu |
+| Candidat déjà champion | Aucune action |
+| Score inférieur ou égal à celui du champion | Champion conservé |
+| Score strictement supérieur, ou champion sans score | Nouvelle version, qui reçoit l'alias `champion` |
+
+Le nom du modèle et celui de l'alias se trouvent dans la section `mlflow` de `config/config.yaml`.
+
+Dans l'interface MLflow, l'alias se voit dans *Model registry* (barre de navigation de gauche), colonne *Aliased versions*. L'onglet *Models* d'une expérience liste les modèles enregistrés par les runs : ils n'ont jamais d'alias.
 
 ## Tests et qualité du code
 
@@ -181,8 +207,9 @@ uv run ruff format --check .  # mise en forme
 | `tests/test_validation.py` | 9 | Règles du schéma : colonnes, types, valeurs manquantes, bornes, cultures autorisées |
 | `tests/test_data.py` | 4 | Variables explicatives, découpage stratifié et reproductible, plis de validation croisée |
 | `tests/test_train.py` | 1 | `train` et `tune` donnent le même score pour les mêmes réglages |
+| `tests/test_promote.py` | 11 | Règle de promotion, dans tous les cas du tableau ci-dessus |
 
-Les tests utilisent de petits tableaux fabriqués : ils s'exécutent sans les données et sans MLflow.
+Les tests utilisent de petits tableaux fabriqués et une base MLflow SQLite temporaire (fixture `config` de `tests/conftest.py`) : ils s'exécutent sans les données, sans Docker et sans serveur MLflow.
 
 `uv run ruff check . --fix` et `uv run ruff format .` corrigent automatiquement la plupart des écarts. Dans VS Code, avec l'extension Ruff, `.vscode/settings.json` trie les imports, applique les corrections et met en forme le code à chaque enregistrement.
 

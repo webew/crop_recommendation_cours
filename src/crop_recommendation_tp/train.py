@@ -63,5 +63,6 @@ def main() -> None:
         predictions,
         X_test,
         y_test,
+        tags={"stage": "candidate"},
     )
     print(f"Run {run_id} enregistré : {metrics}")
