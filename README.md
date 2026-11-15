@@ -2,15 +2,28 @@
 
 Projet support du cours : recommander une culture (22 classes) à partir de 7 mesures du sol et du climat, puis industrialiser la démarche étape par étape.
 
-## Point de départ
+## Étapes
 
-Le projet contient :
+Chaque étape correspond à un commit et à une étiquette Git. Pour récupérer l'état du projet à une étape donnée :
+
+```bash
+git checkout etape-1
+```
+
+| Étiquette | Étape | Apport |
+| --- | --- | --- |
+| `etape-0` | Point de départ | projet uv, configuration, notebook, MLflow local |
+| `etape-1` | Validation des données | schéma des données, fonction `validate` |
+
+## Contenu
 
 | Élément | Rôle |
 | --- | --- |
 | `pyproject.toml`, `uv.lock`, `.python-version` | Projet Python et versions exactes des dépendances |
 | `config/config.yaml` | Réglages : données, découpage, MLflow, grille de recherche |
-| `src/crop_recommendation_tp/config.py` | Lecture de la configuration |
+| `config/schema.yaml` | Schéma des données : colonnes, types, bornes, cultures autorisées |
+| `src/crop_recommendation_tp/config.py` | Lecture des fichiers YAML |
+| `src/crop_recommendation_tp/validation.py` | Contrôle d'un tableau par rapport au schéma |
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles) |
 | `notebooks/01_demarche_modelisation.ipynb` | Démarche de modélisation, essais enregistrés dans MLflow |
 
@@ -52,6 +65,16 @@ uv run mlflow server --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1 --
 2. Choisir le noyau : *Sélectionner un noyau* → *Environnements Python* → `.venv` du projet.
 3. Lancer toutes les cellules (*Run All*).
 4. Dans MLflow, ouvrir l'expérience `crop-recommendation-exploration` : un run par modèle comparé, un run de réglage et un run « modèle final ».
+
+## Contrôler les données
+
+Le schéma `config/schema.yaml` décrit les données attendues. La fonction `validate` renvoie la liste des écarts ; une liste vide signifie des données conformes.
+
+```bash
+uv run python -c "import pandas as pd; from crop_recommendation_tp.config import load_config, load_yaml; from crop_recommendation_tp.validation import validate; c = load_config(); print(validate(pd.read_csv(c['dataset']['path']), load_yaml(c['dataset']['schema'])))"
+```
+
+Résultat attendu : `[]`.
 
 ## Résolution de problèmes
 
