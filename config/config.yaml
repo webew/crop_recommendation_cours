@@ -1,0 +1,15 @@
+dataset:
+    path: data/raw/crop_recommendation.csv
+    target: label
+split:
+    test_size: 0.2
+    random_seed: 42
+mlflow:
+    tracking_uri: http://127.0.0.1:5001
+    experiment_name: crop-recommendation
+tuning:
+    cv_folds: 5
+    scoring: f1_macro
+    param_grid:
+        n_estimators: [50, 100, 200]
+        max_depth: [3, 5, 10, null]
