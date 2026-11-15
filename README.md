@@ -21,6 +21,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `etape-0` | Point de départ | projet uv, configuration, notebook, MLflow local |
 | `etape-1` | Validation des données | schéma des données, fonction `validate` |
 | `etape-2` | Versionnage des données | DVC : données hors de Git, stockage local |
+| `etape-3` | Du notebook au paquet | `data.py` : chargement validé, découpage, plis de validation croisée |
 
 ## Contenu
 
@@ -31,6 +32,7 @@ Le serveur MLflow et ses essais (`mlflow.db`, `mlartifacts/`) ne sont pas suivis
 | `config/schema.yaml` | Schéma des données : colonnes, types, bornes, cultures autorisées |
 | `src/crop_recommendation_tp/config.py` | Lecture des fichiers YAML |
 | `src/crop_recommendation_tp/validation.py` | Contrôle d'un tableau par rapport au schéma |
+| `src/crop_recommendation_tp/data.py` | Chargement et validation des données, variables explicatives, découpage, plis de validation croisée |
 | `data/raw/crop_recommendation.csv.dvc` | Étiquette DVC des données : empreinte md5 et taille |
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles), gérées par DVC et ignorées par Git |
 | `.dvc/config` | Configuration de DVC, dont l'adresse du stockage |
