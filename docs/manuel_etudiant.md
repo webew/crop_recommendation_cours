@@ -52,6 +52,8 @@ Durée totale indicative : une dizaine d'heures.
 ### Conventions
 
 - Les commandes se tapent dans un terminal, **à la racine du projet** (le dossier `crop_recommendation_cours`).
+- Elles fonctionnent telles quelles dans Git Bash, dans le terminal de macOS et dans PowerShell, sauf indication contraire : la variante PowerShell est alors donnée.
+- `<…>` désigne une valeur à remplacer, chevrons compris : `<git_commit>` devient par exemple `2b3e414`.
 - `→` annonce le résultat attendu d'une commande.
 - Les chemins de fichiers sont relatifs à la racine du projet.
 
@@ -165,7 +167,7 @@ uv run dvc pull        # à partir de l'étape 2
 
 - `-f` (*force*) abandonne les modifications locales des fichiers suivis par Git. Sans `-f`, Git refuse de changer d'étape si vous avez modifié un fichier. **Vos modifications sont perdues** : copiez-les ailleurs si vous voulez les garder.
 - `uv sync` installe les dépendances de l'étape : certaines étapes en ajoutent.
-- `uv run dvc pull` restaure les données, gérées par DVC à partir de l'étape 2.
+- `uv run dvc pull` restaure les données, gérées par DVC à partir de l'étape 2. Il suppose la **première mise en place** de l'étape 2 faite sur votre poste : si vous arrivez directement à une étape ultérieure, faites-la d'abord.
 
 ### « detached HEAD »
 
@@ -613,16 +615,17 @@ uv sync
 Le CSV **disparaît** de `data/raw/` : à cette étape, il n'est plus suivi par Git, et Git retire les fichiers qu'il ne suit plus. Le stockage DVC n'existe pas encore sur votre poste. **Première mise en place**, une seule fois :
 
 ```bash
-git show etape-1:data/raw/crop_recommendation.csv > data/raw/crop_recommendation.csv
+git restore --source=etape-1 -- data/raw/crop_recommendation.csv
 uv run dvc add data/raw/crop_recommendation.csv
-uv run dvc push
+uv run dvc push          # → 1 file pushed
 uv run dvc status        # → Data and pipelines are up to date.
-git status               # → nothing to commit, working tree clean
+git status               # → aucune modification
 ```
 
-- `git show etape-1:<fichier>` affiche le fichier tel qu'il était dans le commit de l'étape 1 ; `>` écrit cet affichage dans un fichier.
-- `dvc add` calcule l'empreinte du fichier et le range dans le cache. L'empreinte est identique à celle de l'étiquette du dépôt : Git ne voit aucune modification.
-- `dvc push` envoie les données dans le stockage `../crop_recommendation_cours_storage`.
+- `git restore --source=etape-1` remet le fichier tel qu'il était dans le commit de l'étape 1, octet pour octet, sans que Git le suive de nouveau.
+- `dvc add` calcule l'empreinte du fichier et le range dans le cache. L'empreinte est identique à celle de l'étiquette du dépôt (`5e743dd4…`) : Git ne voit aucune modification. Si `git status` signale `crop_recommendation.csv.dvc` modifié, le fichier restauré n'est pas le bon : supprimez-le et recommencez.
+- `dvc push` crée le stockage `../crop_recommendation_cours_storage`, à côté du dépôt, et y envoie les données. Il contient alors un seul fichier : `files/md5/5e/743dd4cf49f84d23a904cd51c9b5b8`.
+- N'utilisez pas `git show etape-1:<fichier> > <fichier>` : sous Windows PowerShell, la redirection `>` réécrit le texte en UTF-16. Le fichier change de taille et d'empreinte.
 
 Aux changements d'étape suivants, `uv run dvc pull` suffit.
 
@@ -677,8 +680,8 @@ Le chemin du stockage est relatif au dossier `.dvc/`, d'où le double `../` : `.
 ### Lecture : cache et stockage
 
 ```bash
-find .dvc/cache -type f
-# → .dvc/cache/files/md5/5e/743dd4cf49f84d23a904cd51c9b5b8
+ls .dvc/cache/files/md5/5e                              # → 743dd4cf49f84d23a904cd51c9b5b8
+ls ../crop_recommendation_cours_storage/files/md5/5e    # → 743dd4cf49f84d23a904cd51c9b5b8
 ```
 
 Le contenu est rangé **par empreinte** : les deux premiers caractères forment le nom du dossier, la suite le nom du fichier. Le stockage distant suit la même organisation.
@@ -703,7 +706,7 @@ uv run dvc checkout --force      # restaure la version décrite par l'étiquette
 uv run dvc status                # → Data and pipelines are up to date.
 ```
 
-- `>>` ajoute une ligne à la fin du fichier.
+- `>>` ajoute une ligne à la fin du fichier (sous PowerShell, encodée en UTF-16 : pour DVC, le fichier est modifié de la même façon).
 - `--force` est nécessaire : DVC refuse d'écraser une modification locale sans confirmation explicite.
 
 ### Pièges fréquents
@@ -712,6 +715,7 @@ uv run dvc status                # → Data and pipelines are up to date.
 | --- | --- | --- |
 | `FileNotFoundError … crop_recommendation.csv` | données retirées par `git checkout` | `uv run dvc pull`, ou la première mise en place |
 | `Some of the cache files do not exist` | stockage DVC absent sur ce poste | première mise en place |
+| `git status` signale `crop_recommendation.csv.dvc` modifié après la première mise en place | CSV restauré différent de l'original (souvent : `git show … >` sous PowerShell) | supprimer le CSV et le dossier `../crop_recommendation_cours_storage`, `git checkout -- data/raw`, puis refaire la mise en place avec `git restore` |
 | `dvc checkout` ne restaure pas le fichier | modification locale protégée | `uv run dvc checkout --force` |
 
 ### Questions de compréhension
@@ -1288,7 +1292,8 @@ Dans MLflow, expérience `crop-recommendation` :
 
 | Symptôme | Cause | Solution |
 | --- | --- | --- |
-| `git_commit` se termine par `-dirty` | fichiers modifiés non commités | commiter avant d'entraîner un modèle que l'on veut garder |
+| `git_commit` se termine par `-dirty` | fichiers modifiés ou non suivis : `git status` les liste | commiter avant d'entraîner un modèle que l'on veut garder ; notebook enregistré après exécution : `git checkout -- notebooks` |
+| `-dirty` avec `?? .env` dans `git status` | `.env` créé à l'étape 7, et `.gitignore` ne l'exclut qu'à partir de cette étape | supprimer `.env` pour revenir aux étapes 0 à 6, le recréer à l'étape 7 |
 | `data_md5` se termine par `-modified` | CSV différent de l'étiquette `.dvc` | `uv run dvc checkout --force`, ou `dvc add` si la modification est voulue |
 | `Données non conformes au schéma` | CSV invalide | lire la liste des erreurs |
 
@@ -1412,6 +1417,8 @@ Objectif : partir d'un run de `train` et retrouver le code, les données et les 
    git describe --tags --exact-match <git_commit>
    ```
 
+   **Résultat attendu** : `2b3e414 Étape 5 : entraînement en script` et `etape-5`, si votre dernier `train` date de l'étape 5 (l'étape 6 n'entraîne rien). Si `git_commit` se termine par `-dirty`, utiliser l'identifiant sans le suffixe : il désigne le commit de départ, mais le code exécuté en différait.
+
 4. **Les données** : tag `data_md5`, à comparer à l'étiquette DVC de ce commit.
 
    ```bash
@@ -1469,10 +1476,10 @@ Le serveur MLflow des étapes précédentes tourne dans un terminal, avec une ba
    git checkout -f etape-7
    uv sync
    uv run dvc pull
-   cp .env.example .env          # Windows : Copy-Item .env.example .env
+   cp .env.example .env
    ```
 
-   Ouvrir `.env` et renseigner un mot de passe après `POSTGRES_PASSWORD=`, puis :
+   Ouvrir `.env` et renseigner un mot de passe après `POSTGRES_PASSWORD=`, en lettres et chiffres seulement : il est inséré dans une adresse (`postgresql+psycopg2://…`) où `@`, `:`, `/` ou `#` la casseraient. Puis :
 
    ```bash
    docker compose up -d --build
@@ -1765,7 +1772,7 @@ Chaque test de `promote` reçoit ainsi une base MLflow **neuve**, sans serveur. 
 
    ```bash
    uv run train
-   uv run promote      # → Candidat non promu : 0.84… <= 0.9943.
+   uv run promote      # → Candidat non promu : 0.8472 <= 0.9943.
    git checkout -- config
    ```
 
@@ -1922,10 +1929,10 @@ def predict(entree: CropInput):  # pyright: ignore[reportInvalidTypeForm]
 3. En ligne de commande :
 
    ```bash
-   curl http://127.0.0.1:8000/health
+   curl http://127.0.0.1:8000/health      # PowerShell : curl.exe http://127.0.0.1:8000/health
    ```
 
-   **Résultat attendu** : `{"status":"ok","version":"1","run_id":"…"}`.
+   **Résultat attendu** : `{"status":"ok","version":"1","run_id":"…"}`. Sous PowerShell, `curl` sans `.exe` désigne une autre commande (`Invoke-WebRequest`).
 
 4. Après une nouvelle promotion, l'API sert toujours l'ancien modèle : il faut la relancer (`Ctrl+C`, puis `uv run fastapi dev`).
 
@@ -2062,9 +2069,9 @@ Depuis la version 3, le serveur MLflow n'accepte que les noms d'hôte autorisés
 ### Manipulations
 
 1. `docker compose ps` : trois services en bonne santé.
-2. `curl http://127.0.0.1:8000/health`, puis une prédiction depuis <http://127.0.0.1:8000/docs>.
+2. `curl http://127.0.0.1:8000/health` (PowerShell : `curl.exe`), puis une prédiction depuis <http://127.0.0.1:8000/docs>.
 3. `docker compose exec api whoami` → `app`.
-4. Promouvoir un nouveau modèle, puis `docker compose restart api` : `/health` affiche la nouvelle version.
+4. L'API charge le champion à son démarrage : après une promotion, `docker compose restart api` est nécessaire pour que `/health` affiche la nouvelle version. Avec la grille de réglages actuelle, aucun candidat ne dépasse le champion (0,9943) : la promotion se verra en phase 3, avec de nouvelles données.
 
 ### Pièges fréquents
 
@@ -2104,7 +2111,7 @@ Objectif : partir d'une prédiction de l'API et remonter jusqu'au code, aux donn
 2. **Le modèle chargé** :
 
    ```bash
-   curl http://127.0.0.1:8000/health
+   curl http://127.0.0.1:8000/health      # PowerShell : curl.exe http://127.0.0.1:8000/health
    ```
 
    **Résultat attendu** : `{"status":"ok","version":"1","run_id":"b1049297…"}` (votre `run_id` sera différent).
@@ -2115,6 +2122,15 @@ Objectif : partir d'une prédiction de l'API et remonter jusqu'au code, aux donn
    ```bash
    MLFLOW_TRACKING_URI=http://127.0.0.1:5001 uv run mlflow artifacts download --run-id <run_id> --artifact-path config.yaml
    ```
+
+   PowerShell :
+
+   ```powershell
+   $env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5001"
+   uv run mlflow artifacts download --run-id <run_id> --artifact-path config.yaml
+   ```
+
+   La commande affiche le chemin du fichier téléchargé.
 
 5. **Le code** :
 
