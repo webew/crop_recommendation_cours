@@ -8,6 +8,7 @@ from mlflow.models import infer_signature
 from sklearn.dummy import DummyClassifier
 
 from crop_recommendation_tp import api
+from crop_recommendation_tp.monitoring import get_log_path, read_request_log
 from crop_recommendation_tp.tracking import setup_mlflow
 
 MESURES = {
@@ -58,9 +59,19 @@ def test_predict(client):
     assert reponse.json() == {"culture": "rice", "version": "1"}
 
 
-def test_predict_valeur_hors_bornes(client):
+def test_predict_journalise_la_requete(client, config):
+    client.post("/predict", json=MESURES)
+    journal = read_request_log(get_log_path(config))
+    assert len(journal) == 1
+    assert journal.loc[0, "ph"] == 6.5
+    assert journal.loc[0, "prediction"] == "rice"
+    assert journal.loc[0, "model_version"] == "1"
+
+
+def test_predict_valeur_hors_bornes(client, config):
     reponse = client.post("/predict", json={**MESURES, "ph": 15})
     assert reponse.status_code == 422
+    assert read_request_log(get_log_path(config)).empty  # rejetée avant le modèle
 
 
 def test_predict_champ_manquant(client):

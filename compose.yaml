@@ -44,7 +44,10 @@ services:
             MLFLOW_TRACKING_URI: http://mlflow:5000
         ports:
             - "127.0.0.1:${API_PORT:-8000}:8000"
+        volumes:
+            - api_logs:/app/logs
 
 volumes:
     postgres_data:
     mlflow_artifacts:
+    api_logs:

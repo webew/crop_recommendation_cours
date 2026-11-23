@@ -16,8 +16,8 @@ COPY src/ src/
 COPY config/ config/
 RUN uv sync --locked --no-dev
 
-# 3. Exécution sans les droits d'administrateur
-RUN useradd --create-home app
+# 3. Exécution sans les droits d'administrateur ; logs/ reçoit le journal des requêtes
+RUN useradd --create-home app && mkdir logs && chown app:app logs
 USER app
 
 ENV PATH="/app/.venv/bin:$PATH"

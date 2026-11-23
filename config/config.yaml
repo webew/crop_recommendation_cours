@@ -10,6 +10,8 @@ mlflow:
     experiment_name: crop-recommendation
     registered_model_name: crop-recommendation
     champion_alias: champion
+monitoring:
+    requests_log: logs/requests.jsonl
 model:
     params:
         n_estimators: 200

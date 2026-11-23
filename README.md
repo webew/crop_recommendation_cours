@@ -31,6 +31,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `etape-8` | Registre et promotion | `uv run promote`, alias `champion` |
 | `etape-9` | API de prédiction | FastAPI : `/health`, `/predict` |
 | `etape-10` | API en conteneur | `Dockerfile.api`, service `api` dans Docker Compose |
+| `etape-11` | Journal des requêtes | chaque prédiction enregistrée dans `logs/requests.jsonl`, base de la surveillance de la dérive |
 
 ## Contenu
 
@@ -47,6 +48,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `src/crop_recommendation_tp/train.py` | Commande `train` : entraînement et évaluation du modèle |
 | `src/crop_recommendation_tp/promote.py` | Commande `promote` : choix du modèle champion |
 | `src/crop_recommendation_tp/api.py` | API de prédiction, qui sert le modèle champion |
+| `src/crop_recommendation_tp/monitoring.py` | Journal des requêtes de l'API : écriture et lecture |
 | `data/raw/crop_recommendation.csv.dvc` | Étiquette DVC des données : empreinte md5 et taille |
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles), gérées par DVC et ignorées par Git |
 | `.dvc/config` | Configuration de DVC, dont l'adresse du stockage |
@@ -234,6 +236,22 @@ curl -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" \
 - Les entrées sont validées d'après `config/schema.yaml` : une valeur hors bornes ou une variable absente renvoie une erreur **422**.
 - Le modèle est chargé au démarrage : après une promotion, `docker compose restart api`.
 - Sans champion, l'API refuse de démarrer, avec un message qui demande de lancer `uv run train` puis `uv run promote`.
+
+### Journal des requêtes
+
+Chaque prédiction réussie ajoute une ligne JSON au journal : date (UTC), 7 mesures, culture prédite, version du modèle. Les requêtes rejetées (422) n'atteignent pas le modèle et ne sont pas journalisées.
+
+| Lancement | Emplacement du journal |
+| --- | --- |
+| `uv run fastapi dev` | `logs/requests.jsonl` (ignoré par Git) |
+| conteneur `api` | `/app/logs/requests.jsonl`, dans le volume Docker `api_logs` |
+
+Le chemin est réglé par `monitoring.requests_log` dans `config/config.yaml` ; la variable d'environnement `REQUESTS_LOG_PATH` l'emporte.
+
+```bash
+docker compose exec api tail -n 3 logs/requests.jsonl     # dernières requêtes reçues par le conteneur
+uv run python -c "from crop_recommendation_tp.config import load_config; from crop_recommendation_tp.monitoring import get_log_path, read_request_log; print(read_request_log(get_log_path(load_config())))"
+```
 
 ## Tests et qualité du code
 

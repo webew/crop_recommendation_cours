@@ -16,6 +16,9 @@ mlflow.db
 mlruns/
 mlartifacts/
 
+# Journal des requêtes de l'API
+logs/
+
 # Jupyter
 .ipynb_checkpoints/
 

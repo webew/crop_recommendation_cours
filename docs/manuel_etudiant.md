@@ -25,8 +25,10 @@ Projet support : recommander une culture agricole (22 classes) à partir de 7 me
    - [Étape 9 : API de prédiction](#étape-9--api-de-prédiction)
    - [Étape 10 : API en conteneur](#étape-10--api-en-conteneur)
    - [Bilan de la phase 2 : retrouver l'origine d'une prédiction](#bilan-de-la-phase-2--retrouver-lorigine-dune-prédiction)
-7. [Glossaire](#glossaire)
-8. [Aide-mémoire des commandes](#aide-mémoire-des-commandes)
+7. Phase 3, vers la production
+   - [Étape 11 : journal des requêtes](#étape-11--journal-des-requêtes)
+8. [Glossaire](#glossaire)
+9. [Aide-mémoire des commandes](#aide-mémoire-des-commandes)
 
 ---
 
@@ -113,7 +115,7 @@ S'y ajoutent **MLflow**, qui garde la trace de chaque entraînement, et les **te
 - **GitHub** vérifie chaque modification (intégration continue, CI) et livre l'application (déploiement continu, CD).
 - **En production**, on sert le modèle, on le surveille et on réagit.
 
-Ce manuel couvre les phases 1 et 2 : tout ce qui se fait en local. La phase 3 (déploiement et automatisation) fera l'objet d'une suite.
+Ce manuel couvre les phases 1 et 2 : tout ce qui se fait en local. La phase 3 (déploiement et automatisation) est en cours de rédaction : son étape 11, le journal des requêtes, se fait encore en local.
 
 ### Le cycle de vie d'un modèle
 
@@ -2159,6 +2161,161 @@ Chaque maillon est enregistré automatiquement ; aucun ne dépend de la mémoire
 
 ---
 
+## Étape 11 : journal des requêtes
+
+### Pourquoi cette étape
+
+Le modèle a été entraîné sur des données d'une période et d'une région précises. Une fois en service, il reçoit des mesures qui peuvent s'en éloigner : c'est le **data drift** (diapo 12). Pour le détecter, il faut comparer ce que l'API **reçoit** à ce qui a servi à l'entraînement. Or, jusqu'ici, l'API répond puis oublie la requête.
+
+Cette étape garde une trace de chaque prédiction. Sans ce journal, aucune surveillance de la dérive n'est possible : c'est le premier maillon de la phase 3.
+
+### Notions
+
+**Journal (*log*) des requêtes.** Fichier où l'API ajoute une ligne à chaque prédiction : date, mesures reçues, culture prédite, version du modèle.
+
+**JSON Lines (`.jsonl`).** Un objet JSON par ligne. On ajoute une ligne sans relire le fichier, et pandas le lit directement (`pd.read_json(..., lines=True)`).
+
+**UTC.** Heure universelle, sans fuseau ni changement d'heure : deux serveurs dans des pays différents écrivent des dates comparables.
+
+### Passer à l'étape
+
+```bash
+git checkout -f etape-11
+uv sync
+uv run dvc pull
+docker compose up -d --build
+```
+
+Le service `api` est reconstruit : son image contient le nouveau code.
+
+### Fichiers
+
+| Fichier | Changement |
+| --- | --- |
+| `src/crop_recommendation_tp/monitoring.py` | nouveau : `get_log_path`, `log_request`, `read_request_log` |
+| `src/crop_recommendation_tp/api.py` | `/predict` journalise chaque prédiction |
+| `config/config.yaml` | ajout de `monitoring.requests_log` |
+| `compose.yaml`, `Dockerfile.api` | volume `api_logs` monté sur `/app/logs` |
+| `.gitignore`, `.dockerignore` | `logs/` exclu de Git et des images |
+| `tests/test_monitoring.py`, `tests/test_api.py`, `tests/conftest.py` | 4 nouveaux tests, un test complété |
+
+### Lecture du code : `monitoring.py`
+
+```python
+def log_request(path: Path, mesures: dict, culture: str, version: str) -> None:
+    ligne = {
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
+        **mesures,
+        "prediction": culture,
+        "model_version": version,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _verrou, open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(ligne, ensure_ascii=False) + "\n")
+```
+
+- `**mesures` déplie les 7 mesures dans le dictionnaire : une colonne par variable, comme dans les données d'entraînement. La comparaison des deux (étape suivante) en sera directe.
+- `model_version` : on saura quel modèle a répondu, même après une promotion.
+- `open(path, "a")` : mode **ajout**, les lignes précédentes sont conservées.
+- `_verrou` (`threading.Lock`) : FastAPI traite plusieurs requêtes en même temps ; le verrou empêche deux écritures de se mélanger dans une même ligne.
+
+```python
+def get_log_path(config: dict) -> Path:
+    path = os.environ.get("REQUESTS_LOG_PATH") or config["monitoring"]["requests_log"]
+    return ROOT / path
+```
+
+- Même principe que `MLFLOW_TRACKING_URI` (étape 5) : la variable d'environnement l'emporte sur `config.yaml`.
+- Un chemin absolu reste absolu : `ROOT / "/tmp/x.jsonl"` donne `/tmp/x.jsonl`. Les tests en profitent pour écrire dans un dossier temporaire.
+
+### Lecture du code : `api.py`
+
+```python
+@app.post("/predict")
+def predict(entree: CropInput):
+    mesures = entree.model_dump()
+    donnees = pd.DataFrame([mesures]).astype("float64")
+    culture = str(app.state.model.predict(donnees)[0])
+    log_request(app.state.log_path, mesures, culture, app.state.version)
+    return {"culture": culture, "version": app.state.version}
+```
+
+- Le chemin du journal est calculé **une fois**, au démarrage (`lifespan`), comme le chargement du modèle.
+- Une requête invalide (pH = 15) est rejetée par FastAPI **avant** d'atteindre `predict` : elle n'est pas journalisée. Le journal ne contient que des mesures plausibles, comparables aux données d'entraînement.
+
+### Lecture : le volume `api_logs`
+
+```yaml
+api:
+    volumes:
+        - api_logs:/app/logs
+```
+
+```dockerfile
+RUN useradd --create-home app && mkdir logs && chown app:app logs
+```
+
+- Sans volume, le journal disparaîtrait avec le conteneur, à chaque `docker compose up --build`.
+- Le dossier `logs/` est créé dans l'image et confié à l'utilisateur `app`. À sa création, le volume reprend ce propriétaire : l'API, qui tourne sans droits d'administrateur, peut y écrire.
+
+### Manipulations
+
+1. Envoyer deux prédictions valides et une invalide depuis <http://127.0.0.1:8000/docs> (ou avec `curl`, voir le README).
+2. Lire le journal du conteneur :
+
+   ```bash
+   docker compose exec api tail -n 3 logs/requests.jsonl
+   ```
+
+   **Résultat attendu** : deux lignes, avec `"prediction"` et `"model_version"` ; aucune ligne pour la requête invalide.
+
+3. Redémarrer l'API, puis relire le journal :
+
+   ```bash
+   docker compose restart api
+   docker compose exec api wc -l logs/requests.jsonl     # → 2 logs/requests.jsonl
+   ```
+
+   Les lignes sont conservées : elles vivent dans le volume, pas dans le conteneur.
+
+4. Tests : `uv run pytest` → **34 passed**.
+
+### Pièges fréquents
+
+| Symptôme | Cause | Solution |
+| --- | --- | --- |
+| `Permission denied: '/app/logs/requests.jsonl'` | volume `api_logs` créé par une autre version de l'image, avec un autre propriétaire | `docker compose down`, `docker volume rm crop_recommendation_cours_api_logs`, puis `docker compose up -d` |
+| `ports are not available … 8000` | port 8000 occupé par une autre application | choisir un autre port : `API_PORT=8001 docker compose up -d` (PowerShell : `$env:API_PORT = "8001"`) |
+| Git Bash : `No such file or directory` sur `/app/logs/…` | Git Bash convertit les chemins qui commencent par `/` | utiliser un chemin relatif (`logs/requests.jsonl`), ou `MSYS_NO_PATHCONV=1` devant la commande |
+
+### Limites, à traiter dans les étapes suivantes
+
+- Le fichier grossit sans fin : en production, il faudra le faire tourner (un fichier par jour) ou l'envoyer dans une base.
+- Les requêtes rejetées (422) ne sont comptées nulle part. Leur nombre est pourtant un signal utile (« Données invalides en entrée », diapo 11) : il relève de la surveillance du service (Prometheus).
+- Le journal contient les données des utilisateurs : en production, il faut décider combien de temps on le garde.
+
+### Questions de compréhension
+
+<details>
+<summary>1. Pourquoi enregistrer la version du modèle dans chaque ligne ?</summary>
+
+Après une promotion, le journal mêle des réponses de deux modèles. La version permet d'analyser chaque modèle séparément, et de relier une réponse surprenante au run qui l'a produite (bilan de la phase 2).
+</details>
+
+<details>
+<summary>2. Pourquoi ne pas journaliser les requêtes rejetées dans le même fichier ?</summary>
+
+Le journal sert à comparer les entrées reçues aux données d'entraînement. Des valeurs impossibles (pH = 15) fausseraient cette comparaison : ce sont des erreurs de saisie ou de capteur, pas une évolution du monde. Elles se surveillent à part, en comptant les erreurs 422.
+</details>
+
+<details>
+<summary>3. Que se passerait-il sans le volume <code>api_logs</code> ?</summary>
+
+Le journal serait écrit dans le conteneur. Il survivrait à un `docker compose restart`, mais disparaîtrait au premier `docker compose up --build`, qui recrée le conteneur à partir de la nouvelle image.
+</details>
+
+---
+
 ## Glossaire
 
 | Terme | Définition |
@@ -2187,6 +2344,8 @@ Chaque maillon est enregistré automatiquement ; aucun ne dépend de la mémoire
 | Hyperparamètre | réglage d'un modèle choisi avant l'entraînement |
 | Image Docker | environnement logiciel figé, décrit par un `Dockerfile` |
 | Jeu de test | données mises de côté, utilisées une seule fois à la fin |
+| Journal des requêtes | fichier où l'API enregistre chaque prédiction : mesures, culture, version du modèle |
+| JSON Lines | format texte : un objet JSON par ligne |
 | Métrique | résultat chiffré enregistré dans un run |
 | MLOps | pratiques qui rendent un projet de ML reproductible, traçable, vérifié et déployable |
 | Paramètre (MLflow) | réglage d'entrée enregistré dans un run |
@@ -2256,5 +2415,6 @@ Chaque maillon est enregistré automatiquement ; aucun ne dépend de la mémoire
 | `docker compose ps` | état des services |
 | `docker compose logs --tail 20 <service>` | journal d'un service |
 | `docker compose restart api` | recharger le champion dans l'API |
+| `docker compose exec api tail -n 3 logs/requests.jsonl` | dernières requêtes journalisées (étape 11) |
 | `docker compose down` | arrêter ; les données sont conservées |
 | `docker compose down -v` | arrêter et supprimer les données |

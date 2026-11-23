@@ -8,6 +8,7 @@ from mlflow.exceptions import MlflowException
 from pydantic import Field, create_model
 
 from crop_recommendation_tp.config import load_config, load_yaml
+from crop_recommendation_tp.monitoring import get_log_path, log_request
 from crop_recommendation_tp.tracking import setup_mlflow
 
 
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
     app.state.model = mlflow.pyfunc.load_model(f"models:/{name}/{version.version}")
     app.state.version = str(version.version)
     app.state.run_id = version.run_id
+    app.state.log_path = get_log_path(config)
     yield
 
 
@@ -64,6 +66,8 @@ def health():
 
 @app.post("/predict")
 def predict(entree: CropInput):  # pyright: ignore[reportInvalidTypeForm]
-    donnees = pd.DataFrame([entree.model_dump()]).astype("float64")
-    prediction = app.state.model.predict(donnees)
-    return {"culture": str(prediction[0]), "version": app.state.version}
+    mesures = entree.model_dump()
+    donnees = pd.DataFrame([mesures]).astype("float64")
+    culture = str(app.state.model.predict(donnees)[0])
+    log_request(app.state.log_path, mesures, culture, app.state.version)
+    return {"culture": culture, "version": app.state.version}

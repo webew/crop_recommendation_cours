@@ -11,6 +11,7 @@ data/
 .dvc/cache
 mlruns/
 mlflow.db
+logs/
 
 # Inutile pour faire tourner l'API
 notebooks/

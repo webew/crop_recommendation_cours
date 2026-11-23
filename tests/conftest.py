@@ -17,5 +17,6 @@ def config(tmp_path, monkeypatch):
             "champion_alias": "champion",
         },
         "tuning": {"scoring": "f1_macro"},
+        "monitoring": {"requests_log": (tmp_path / "requests.jsonl").as_posix()},
     }
     mlflow.set_tracking_uri(None)
