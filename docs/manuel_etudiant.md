@@ -2648,8 +2648,8 @@ Deux réglages limitent le bruit :
 
 | Symptôme | Cause | Solution |
 | --- | --- | --- |
-| `denied` ou `unauthorized` au `docker pull` | paquet encore privé (visibilité par défaut à la première publication) | demander au formateur ; sur son propre dépôt : *Package settings* → *Change visibility* → *Public* |
-| Le premier `docker pull` est long | image d'environ 2,5 Go (bibliothèques scientifiques) | patienter ; les téléchargements suivants ne reprennent que les couches modifiées |
+| `denied` ou `unauthorized` au `docker pull` | paquet privé : il hérite de la visibilité du dépôt (public ici) | sur un dépôt privé : `docker login ghcr.io`, ou *Package settings* → *Change visibility* → *Public* |
+| Le premier `docker pull` est long | environ 570 Mo à télécharger, 2,6 Go une fois décompressée (bibliothèques scientifiques) | patienter ; les téléchargements suivants ne reprennent que les couches modifiées |
 | `docker compose up -d` ne prend pas l'image publiée | `compose.ghcr.yaml` oublié | toujours passer les deux fichiers avec `-f` |
 | Le job `image` est absent d'une exécution | événement `pull_request`, ou branche autre que `main` | normal : seul un push sur `main` ou d'un tag `etape-*` publie |
 

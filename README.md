@@ -347,7 +347,7 @@ Aucun secret à créer : le job se connecte avec le jeton temporaire `GITHUB_TOK
 | `env file … .env not found` | Fichier des secrets absent | `cp .env.example .env`, puis renseigner `POSTGRES_PASSWORD` |
 | Le service `api` s'arrête : `Alias champion introuvable…` | Registre sans champion | `uv run train`, `uv run promote`, puis `docker compose restart api` |
 | `403` et `Invalid Host header` dans le journal de l'API | Nom d'hôte non autorisé par MLflow | Ajouter ce nom à `--allowed-hosts` dans `compose.yaml` |
-| `denied` ou `unauthorized` lors du téléchargement de l'image `ghcr.io` | Paquet encore privé | Sur GitHub : *Packages* → paquet → *Package settings* → *Change visibility* → *Public* |
+| `denied` ou `unauthorized` lors du téléchargement de l'image `ghcr.io` | Paquet privé (il hérite de la visibilité du dépôt) | Sur GitHub : *Packages* → paquet → *Package settings* → *Change visibility* → *Public* |
 | `ModuleNotFoundError: crop_recommendation_tp` | Noyau du notebook différent de `.venv` | Sélectionner le noyau `.venv`, puis relancer |
 | `FileNotFoundError: 'config/config.yaml'` | Le notebook ne tourne pas depuis la racine du projet | Redémarrer le noyau et relancer toutes les cellules |
 | `FileNotFoundError: … crop_recommendation.csv` après `git checkout etape-2` | Données retirées de Git, stockage DVC absent | Section « Première mise en place » |
