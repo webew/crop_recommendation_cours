@@ -22,7 +22,7 @@ simulate = "crop_recommendation_tp.simulate:main"
 drift = "crop_recommendation_tp.drift:main"
 
 [build-system]
-requires = ["uv_build>=0.11.29,<0.12.0"]
+requires = ["uv_build>=0.11.29,<0.14.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
