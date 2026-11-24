@@ -33,6 +33,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `etape-10` | API en conteneur | `Dockerfile.api`, service `api` dans Docker Compose |
 | `etape-11` | Journal des requêtes | chaque prédiction enregistrée dans `logs/requests.jsonl`, base de la surveillance de la dérive |
 | `etape-12` | Surveillance de la dérive | `uv run simulate` (scénarios d'utilisateurs), `uv run drift` (Evidently : journal comparé aux données d'entraînement) |
+| `etape-13` | Image publiée et dépendances à jour | la CI publie l'image de l'API sur `ghcr.io` ; Dependabot propose les mises à jour |
 
 ## Contenu
 
@@ -58,8 +59,10 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `notebooks/01_demarche_modelisation.ipynb` | Démarche de modélisation, essais enregistrés dans MLflow |
 | `tests/` | Tests automatisés (pytest) |
 | `.vscode/settings.json` | Ruff à l'enregistrement dans VS Code |
-| `.github/workflows/ci.yml` | Intégration continue (GitHub Actions) |
+| `.github/workflows/ci.yml` | Intégration continue (GitHub Actions) : tests, puis publication de l'image de l'API |
+| `.github/dependabot.yml` | Mises à jour automatiques des dépendances, proposées en pull requests |
 | `compose.yaml` | Services Docker : PostgreSQL, serveur MLflow, API |
+| `compose.ghcr.yaml` | Variante : l'API vient de l'image publiée au lieu d'être construite |
 | `Dockerfile.mlflow`, `Dockerfile.api` | Images du serveur MLflow et de l'API |
 | `.dockerignore` | Fichiers exclus des images (secrets, données, environnement) |
 | `.env.example` | Modèle du fichier des secrets `.env` (ignoré par Git) |
@@ -312,6 +315,29 @@ uv run pytest
 
 `uv sync --locked` échoue si `uv.lock` ne correspond pas à `pyproject.toml`. Avant chaque commit, lancer les trois mêmes commandes en local. Résultat des exécutions : onglet *Actions* du dépôt GitHub, ou `gh run list`.
 
+### Publication de l'image
+
+Quand les tests passent, le job `image` construit `Dockerfile.api` et publie l'image sur GitHub Container Registry : `ghcr.io/webew/crop_recommendation_cours`. Il ne tourne que pour un push sur `main` ou d'un tag `etape-*`, jamais pour une pull request.
+
+| Événement | Étiquettes de l'image |
+| --- | --- |
+| push sur `main` | `latest`, `sha-<commit>` |
+| push du tag `etape-13` | `etape-13`, `sha-<commit>` |
+
+L'étiquette `sha-<commit>` relie chaque image au code exact qui l'a produite. Pour lancer la pile avec l'image publiée au lieu de la construire :
+
+```bash
+docker compose -f compose.yaml -f compose.ghcr.yaml up -d            # latest
+API_TAG=etape-13 docker compose -f compose.yaml -f compose.ghcr.yaml up -d
+docker compose images api                                            # image réellement utilisée
+```
+
+Aucun secret à créer : le job se connecte avec le jeton temporaire `GITHUB_TOKEN`, autorisé à écrire dans le registre par `permissions: packages: write`.
+
+### Dependabot
+
+`.github/dependabot.yml` demande à GitHub de vérifier chaque semaine les versions des bibliothèques Python (`uv.lock`), des images Docker et, chaque mois, des actions de la CI. Chaque mise à jour arrive en pull request, que la CI teste : on fusionne si elle est verte. Les mises à jour mineures et correctives de Python sont regroupées dans une seule PR, et pandas 3 est ignoré tant qu'Evidently ne le prend pas en charge. Liste des PR : onglet *Pull requests*, ou `gh pr list --author app/dependabot`.
+
 ## Résolution de problèmes
 
 | Message ou symptôme | Cause | Solution |
@@ -321,6 +347,7 @@ uv run pytest
 | `env file … .env not found` | Fichier des secrets absent | `cp .env.example .env`, puis renseigner `POSTGRES_PASSWORD` |
 | Le service `api` s'arrête : `Alias champion introuvable…` | Registre sans champion | `uv run train`, `uv run promote`, puis `docker compose restart api` |
 | `403` et `Invalid Host header` dans le journal de l'API | Nom d'hôte non autorisé par MLflow | Ajouter ce nom à `--allowed-hosts` dans `compose.yaml` |
+| `denied` ou `unauthorized` lors du téléchargement de l'image `ghcr.io` | Paquet encore privé | Sur GitHub : *Packages* → paquet → *Package settings* → *Change visibility* → *Public* |
 | `ModuleNotFoundError: crop_recommendation_tp` | Noyau du notebook différent de `.venv` | Sélectionner le noyau `.venv`, puis relancer |
 | `FileNotFoundError: 'config/config.yaml'` | Le notebook ne tourne pas depuis la racine du projet | Redémarrer le noyau et relancer toutes les cellules |
 | `FileNotFoundError: … crop_recommendation.csv` après `git checkout etape-2` | Données retirées de Git, stockage DVC absent | Section « Première mise en place » |

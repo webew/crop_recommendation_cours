@@ -1,0 +1,8 @@
+# Variante : l'API vient de l'image publiée sur ghcr.io par la CI, au lieu d'être construite ici.
+#   docker compose -f compose.yaml -f compose.ghcr.yaml up -d
+# API_TAG choisit la version : latest (défaut), etape-13, sha-<commit>…
+services:
+    api:
+        build: !reset null
+        image: ghcr.io/webew/crop_recommendation_cours:${API_TAG:-latest}
+        pull_policy: always

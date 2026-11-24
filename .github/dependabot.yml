@@ -1,0 +1,35 @@
+# Dependabot : propose chaque semaine des mises à jour sous forme de pull requests.
+# La CI teste chaque PR ; on ne fusionne que si elle est verte.
+version: 2
+updates:
+    # Bibliothèques Python (pyproject.toml + uv.lock)
+    - package-ecosystem: "uv"
+      directory: "/"
+      schedule:
+          interval: "weekly"
+      groups:
+          # une seule PR pour toutes les mises à jour mineures et correctives
+          python-mineures:
+              update-types: ["minor", "patch"]
+      ignore:
+          # Evidently 0.7 ne fonctionne pas avec pandas 3 (voir pyproject.toml)
+          - dependency-name: "pandas"
+            update-types: ["version-update:semver-major"]
+
+    # Images de base des Dockerfile (python:3.13-slim, uv)
+    - package-ecosystem: "docker"
+      directory: "/"
+      schedule:
+          interval: "weekly"
+
+    # Images de compose.yaml (postgres)
+    - package-ecosystem: "docker-compose"
+      directory: "/"
+      schedule:
+          interval: "weekly"
+
+    # Versions des actions utilisées par la CI
+    - package-ecosystem: "github-actions"
+      directory: "/"
+      schedule:
+          interval: "monthly"

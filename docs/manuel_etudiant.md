@@ -28,6 +28,7 @@ Projet support : recommander une culture agricole (22 classes) à partir de 7 me
 7. Phase 3, vers la production
    - [Étape 11 : journal des requêtes](#étape-11--journal-des-requêtes)
    - [Étape 12 : surveillance de la dérive](#étape-12--surveillance-de-la-dérive)
+   - [Étape 13 : image publiée et dépendances à jour](#étape-13--image-publiée-et-dépendances-à-jour)
 8. [Glossaire](#glossaire)
 9. [Aide-mémoire des commandes](#aide-mémoire-des-commandes)
 
@@ -2525,6 +2526,159 @@ Pour être utilisable par un autre programme : une tâche planifiée ou une CI t
 Non : il compare les entrées, et elles n'ont pas changé. Le concept drift change la relation entre les entrées et la bonne réponse ; il ne se voit qu'avec la vérité terrain, qui arrive tard. D'où l'intérêt de surveiller d'abord les entrées, seul signal disponible tôt, sans s'en contenter.
 </details>
 
+## Étape 13 : image publiée et dépendances à jour
+
+### Pourquoi cette étape
+
+Jusqu'ici, l'image de l'API n'existe que sur le poste qui l'a construite (`docker compose up -d --build`). Pour la faire tourner sur un serveur (étape suivante), il faudrait y copier le code et reconstruire, avec le risque d'obtenir une image différente de celle qui a été testée.
+
+La bonne pratique : **construire une seule fois, dans la CI, après les tests**, puis publier l'image dans un **registre d'images**. Le serveur ne construit rien, il télécharge exactement l'image vérifiée. C'est le même principe que le registre de modèles (étape 8), appliqué au logiciel qui sert le modèle.
+
+Deuxième problème : `uv.lock` fige les versions des dépendances. C'est ce qui rend le projet reproductible (étape 0), mais les versions vieillissent : des failles de sécurité sont découvertes, des corrections publiées. **Dependabot** propose ces mises à jour sous forme de pull requests, que la CI teste avant toute fusion. On reste reproductible, sans rester figé.
+
+### Notions
+
+**Registre d'images.** Serveur qui stocke des images Docker, comme Docker Hub. GitHub en fournit un, **GitHub Container Registry** (`ghcr.io`), rattaché au dépôt : l'image s'appelle `ghcr.io/webew/crop_recommendation_cours`.
+
+**Étiquette d'image.** Nom d'une version de l'image, après les deux-points : `:latest`, `:etape-13`, `:sha-9d9ce6c`. `latest` bouge à chaque publication ; `sha-<commit>` ne bouge jamais et relie l'image au code exact qui l'a produite.
+
+**`GITHUB_TOKEN`.** Jeton temporaire que GitHub fournit à chaque exécution de la CI, valable le temps du job. Aucun mot de passe à créer ni à stocker. Ses droits sont déclarés dans `permissions:`.
+
+**Dependabot.** Robot de GitHub qui lit les fichiers de dépendances, compare aux dernières versions publiées et ouvre une pull request par mise à jour, avec les notes de version.
+
+### Passer à l'étape
+
+```bash
+git checkout -f etape-13
+```
+
+Aucune dépendance Python ne change : ni `uv sync`, ni reconstruction d'image ne sont nécessaires.
+
+### Fichiers
+
+| Fichier | Changement |
+| --- | --- |
+| `.github/workflows/ci.yml` | nouveau job `image` : construit et publie l'image si les tests passent |
+| `.github/dependabot.yml` | nouveau : mises à jour proposées chaque semaine |
+| `compose.ghcr.yaml` | nouveau : variante de `compose.yaml`, API téléchargée au lieu d'être construite |
+
+### Lecture du code : le job `image`
+
+```yaml
+image:
+    needs: tests
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/etape-'))
+    permissions:
+        contents: read
+        packages: write
+```
+
+- `needs: tests` : le job attend la fin des tests et ne démarre que s'ils sont verts. Une image cassée n'est jamais publiée.
+- `if:` : seulement pour un push sur `main` ou d'un tag d'étape. Une pull request, celle d'un étudiant ou de Dependabot, est testée mais ne publie rien.
+- `packages: write` : le droit d'écrire dans le registre, accordé à ce job seul. Le job `tests` garde `contents: read` (principe du moindre privilège).
+
+Les étapes du job :
+
+| Action | Rôle |
+| --- | --- |
+| `docker/setup-buildx-action` | installe le constructeur d'images |
+| `docker/login-action` | se connecte à `ghcr.io` avec `GITHUB_TOKEN` |
+| `docker/metadata-action` | calcule les étiquettes (`latest`, `etape-13`, `sha-…`) et les métadonnées (commit, dépôt) |
+| `docker/build-push-action` | construit `Dockerfile.api` et pousse l'image ; `cache-from/to: type=gha` réutilise les couches d'une exécution à l'autre |
+
+C'est le même `Dockerfile.api` qu'en local (étape 10) : la CI ne fait rien de plus que `docker compose build api`, mais sur une machine neuve, à partir du code commité.
+
+### Lecture : `compose.ghcr.yaml`
+
+```yaml
+services:
+    api:
+        build: !reset null
+        image: ghcr.io/webew/crop_recommendation_cours:${API_TAG:-latest}
+        pull_policy: always
+```
+
+Ce fichier ne se lance pas seul : il **complète** `compose.yaml`. Compose fusionne les deux, dans l'ordre :
+
+```bash
+docker compose -f compose.yaml -f compose.ghcr.yaml up -d
+```
+
+- `build: !reset null` efface la construction locale héritée de `compose.yaml`.
+- `image:` désigne l'image publiée ; `API_TAG` choisit l'étiquette.
+- `pull_policy: always` vérifie à chaque démarrage s'il existe une version plus récente de l'étiquette.
+
+PostgreSQL et MLflow ne changent pas. C'est ce que fera le serveur de l'étape suivante.
+
+### Lecture : `.github/dependabot.yml`
+
+| Écosystème | Fichiers surveillés | Fréquence |
+| --- | --- | --- |
+| `uv` | `pyproject.toml`, `uv.lock` | chaque semaine |
+| `docker` | `Dockerfile.api`, `Dockerfile.mlflow` (`python:3.13-slim`, uv) | chaque semaine |
+| `docker-compose` | `compose.yaml` (`postgres:18`) | chaque semaine |
+| `github-actions` | versions des actions de la CI | chaque mois |
+
+Deux réglages limitent le bruit :
+
+- `groups` : toutes les mises à jour mineures et correctives des bibliothèques Python arrivent dans **une seule** PR.
+- `ignore` : pandas 3 n'est pas proposé, puisqu'Evidently 0.7 ne le prend pas en charge (étape 12). Sans cette règle, Dependabot proposerait la mise à jour chaque semaine et la CI échouerait chaque fois.
+
+### Manipulations
+
+1. Sur GitHub, onglet *Actions* : ouvrir l'exécution du tag `etape-13`. Le job `image` démarre après `tests` (flèche entre les deux).
+2. Page d'accueil du dépôt, colonne de droite, *Packages* : ouvrir `crop_recommendation_cours` et lire les étiquettes publiées.
+3. Télécharger l'image et lire son commit d'origine :
+   ```bash
+   docker pull ghcr.io/webew/crop_recommendation_cours:etape-13
+   docker image inspect ghcr.io/webew/crop_recommendation_cours:etape-13 --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+   git rev-parse etape-13
+   ```
+   Les deux identifiants sont identiques.
+4. Lancer la pile avec l'image publiée :
+   ```bash
+   API_TAG=etape-13 docker compose -f compose.yaml -f compose.ghcr.yaml up -d
+   docker compose images api
+   curl http://127.0.0.1:8000/health
+   ```
+5. Revenir à l'image construite en local : `docker compose up -d --build`.
+6. Onglet *Pull requests* (ou `gh pr list --author app/dependabot`) : lire une PR de Dependabot, ses notes de version et le résultat de la CI.
+
+### Pièges fréquents
+
+| Symptôme | Cause | Solution |
+| --- | --- | --- |
+| `denied` ou `unauthorized` au `docker pull` | paquet encore privé (visibilité par défaut à la première publication) | demander au formateur ; sur son propre dépôt : *Package settings* → *Change visibility* → *Public* |
+| Le premier `docker pull` est long | image d'environ 2,5 Go (bibliothèques scientifiques) | patienter ; les téléchargements suivants ne reprennent que les couches modifiées |
+| `docker compose up -d` ne prend pas l'image publiée | `compose.ghcr.yaml` oublié | toujours passer les deux fichiers avec `-f` |
+| Le job `image` est absent d'une exécution | événement `pull_request`, ou branche autre que `main` | normal : seul un push sur `main` ou d'un tag `etape-*` publie |
+
+### Questions de compréhension
+
+<details>
+<summary>1. Pourquoi construire l'image dans la CI plutôt que sur le serveur de production ?</summary>
+
+Pour que l'image déployée soit exactement celle qui a été testée, construite à partir du code commité, sur une machine neuve. Construire sur le serveur demanderait d'y copier le code et les outils de construction, et pourrait donner une image différente (cache, fichiers locaux, versions téléchargées ce jour-là).
+</details>
+
+<details>
+<summary>2. Pourquoi publier l'étiquette <code>sha-&lt;commit&gt;</code> en plus de <code>latest</code> ?</summary>
+
+`latest` change à chaque publication : elle ne dit pas quel code tourne. `sha-<commit>` ne change jamais : elle permet de déployer une version précise, de revenir à la précédente, et de retrouver le code d'une image en production. C'est la traçabilité de la phase 1, appliquée au déploiement.
+</details>
+
+<details>
+<summary>3. Une PR de Dependabot a une CI rouge. Que faire ?</summary>
+
+Ne pas fusionner. Lire l'erreur : la nouvelle version casse quelque chose (comme pandas 3 avec Evidently). Soit on adapte le code, soit on refuse la mise à jour (fermer la PR, ou ajouter une règle `ignore` en expliquant pourquoi). C'est la CI qui rend les mises à jour sûres : sans tests, on n'oserait fusionner aucune de ces PR.
+</details>
+
+<details>
+<summary>4. Pourquoi le job <code>image</code> ne tourne-t-il jamais pour une pull request ?</summary>
+
+Une PR contient du code non relu : elle pourrait venir de n'importe qui, ou de Dependabot. La publier écraserait `latest` avec un code non validé. On publie seulement ce qui est fusionné sur `main`, ou marqué d'un tag.
+</details>
+
 ---
 
 ## Glossaire
@@ -2543,16 +2697,19 @@ Non : il compare les entrées, et elles n'ont pas changé. Le concept drift chan
 | Concept drift | changement de la relation entre les entrées et la bonne réponse |
 | Conteneur | image Docker en cours d'exécution |
 | Data drift | changement de la distribution des entrées |
+| Dependabot | robot de GitHub qui propose les mises à jour des dépendances en pull requests |
 | Docker Compose | description et lancement de plusieurs conteneurs |
 | DVC | outil de versionnage des données |
 | Empreinte md5 | identifiant calculé à partir du contenu d'un fichier |
 | Environnement virtuel | dossier `.venv` contenant Python et les bibliothèques du projet |
+| Étiquette d'image | nom d'une version d'une image Docker : `latest`, `etape-13`, `sha-<commit>` |
 | Étiquette Git (*tag*) | nom fixe donné à un commit |
 | Evidently | bibliothèque de surveillance de modèles : tests de dérive, rapports |
 | Expérience MLflow | groupe de runs comparables |
 | F1 macro | moyenne des scores F1 de chaque classe |
 | Fausse alerte | dérive signalée par le hasard, sans changement réel |
 | Fixture | fonction pytest qui prépare ce dont un test a besoin |
+| `GITHUB_TOKEN` | jeton temporaire fourni par GitHub à chaque exécution de la CI |
 | Graine aléatoire | valeur qui rend le hasard reproductible |
 | Hyperparamètre | réglage d'un modèle choisi avant l'entraînement |
 | Image Docker | environnement logiciel figé, décrit par un `Dockerfile` |
@@ -2567,6 +2724,7 @@ Non : il compare les entrées, et elles n'ont pas changé. Le concept drift chan
 | Pli (*fold*) | une des parts du jeu d'entraînement en validation croisée |
 | Promotion | désignation d'un nouveau champion |
 | Référence (surveillance) | données auxquelles on compare les requêtes reçues : le jeu d'entraînement |
+| Registre d'images | serveur qui stocke et distribue des images Docker : `ghcr.io`, Docker Hub |
 | Registre de modèles | catalogue des versions de modèles retenues |
 | Run | exécution enregistrée dans MLflow |
 | Schéma | description des données attendues |
@@ -2636,5 +2794,7 @@ Non : il compare les entrées, et elles n'ont pas changé. Le concept drift chan
 | `docker compose exec api tail -n 3 logs/requests.jsonl` | dernières requêtes journalisées (étape 11) |
 | `docker compose exec api rm -f logs/requests.jsonl` | vider le journal (étape 12) |
 | `docker compose cp api:app/logs/requests.jsonl logs/` | copier le journal sur le poste (étape 12) |
+| `docker compose -f compose.yaml -f compose.ghcr.yaml up -d` | démarrer avec l'image publiée sur `ghcr.io` (étape 13) |
+| `docker compose images api` | image utilisée par le service `api` (étape 13) |
 | `docker compose down` | arrêter ; les données sont conservées |
 | `docker compose down -v` | arrêter et supprimer les données |
