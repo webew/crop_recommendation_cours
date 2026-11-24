@@ -12,6 +12,7 @@ data/
 mlruns/
 mlflow.db
 logs/
+reports/
 
 # Inutile pour faire tourner l'API
 notebooks/

@@ -16,8 +16,10 @@ mlflow.db
 mlruns/
 mlartifacts/
 
-# Journal des requêtes de l'API
-logs/
+# Journal des requêtes de l'API et rapports de dérive (le dossier logs/ est gardé vide)
+logs/*
+!logs/.gitkeep
+reports/
 
 # Jupyter
 .ipynb_checkpoints/

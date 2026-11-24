@@ -27,6 +27,7 @@ Projet support : recommander une culture agricole (22 classes) à partir de 7 me
    - [Bilan de la phase 2 : retrouver l'origine d'une prédiction](#bilan-de-la-phase-2--retrouver-lorigine-dune-prédiction)
 7. Phase 3, vers la production
    - [Étape 11 : journal des requêtes](#étape-11--journal-des-requêtes)
+   - [Étape 12 : surveillance de la dérive](#étape-12--surveillance-de-la-dérive)
 8. [Glossaire](#glossaire)
 9. [Aide-mémoire des commandes](#aide-mémoire-des-commandes)
 
@@ -115,7 +116,7 @@ S'y ajoutent **MLflow**, qui garde la trace de chaque entraînement, et les **te
 - **GitHub** vérifie chaque modification (intégration continue, CI) et livre l'application (déploiement continu, CD).
 - **En production**, on sert le modèle, on le surveille et on réagit.
 
-Ce manuel couvre les phases 1 et 2 : tout ce qui se fait en local. La phase 3 (déploiement et automatisation) est en cours de rédaction : son étape 11, le journal des requêtes, se fait encore en local.
+Ce manuel couvre les phases 1 et 2 : tout ce qui se fait en local. La phase 3 (déploiement et automatisation) est en cours de rédaction : ses étapes 11 (journal des requêtes) et 12 (surveillance de la dérive) se font encore en local.
 
 ### Le cycle de vie d'un modèle
 
@@ -2316,6 +2317,216 @@ Le journal serait écrit dans le conteneur. Il survivrait à un `docker compose 
 
 ---
 
+## Étape 12 : surveillance de la dérive
+
+### Pourquoi cette étape
+
+Le modèle a appris sur 1 760 parcelles. Il n'est fiable que pour des parcelles qui leur ressemblent, mais il ne le sait pas : il répond toujours, avec la même assurance. Envoyez à l'API une parcelle de riz à 58 °C (valide pour le schéma, qui autorise jusqu'à 60 °C ; jamais vue à l'entraînement, où la température ne dépasse pas 44 °C) : la réponse est `rice`, sans aucun avertissement.
+
+Le schéma (étape 1) contrôle chaque requête **une à une** : il rejette l'impossible, pas l'inhabituel. Pour voir que les requêtes, **dans leur ensemble**, s'éloignent de ce que le modèle connaît, il faut comparer des **distributions** : celle du journal (étape 11) et celle des données d'entraînement. C'est la surveillance du **data drift** (diapo 12).
+
+Côté métier, une alerte précoce évite de découvrir le problème six mois plus tard, à la récolte.
+
+### Notions
+
+**Référence et données courantes.** La référence est ce que le modèle a appris : les 7 variables du jeu d'entraînement (pas le jeu de test, ni la cible). Les données courantes sont les mesures reçues par l'API, lues dans le journal. On compare uniquement les **entrées** : le journal ne contient pas la bonne réponse.
+
+**Test de Kolmogorov-Smirnov (KS).** Compare deux échantillons d'une même variable en mesurant le plus grand écart entre leurs courbes de fréquences cumulées. Il renvoie une **p-value**.
+
+**p-value.** Probabilité d'observer un écart au moins aussi grand si les deux échantillons venaient de la même distribution. Petite p-value (< 0,05) : l'écart est trop grand pour être dû au hasard, on conclut à une dérive.
+
+**Fausse alerte.** Avec un seuil de 0,05, un test sur deux échantillons de même origine conclut à tort à une dérive une fois sur vingt. Avec 7 variables testées à chaque rapport, une fausse alerte de temps en temps est inévitable.
+
+**Evidently.** Bibliothèque de surveillance de modèles : elle applique le test à chaque variable et produit un rapport HTML.
+
+### Le journal n'est pas un jeu d'entraînement
+
+Les requêtes reçues ne sont pas de nouvelles données d'entraînement : elles ne contiennent pas la culture **réellement adaptée**, connue seulement après la récolte. Le journal sert à **détecter** que les entrées changent. Une alerte déclenche la suite de la diapo 12 : collecter de nouvelles données **étiquetées**, les versionner avec DVC (étape 2), réentraîner (`train`, `promote`).
+
+### Passer à l'étape
+
+```bash
+git checkout -f etape-12
+uv sync
+uv run dvc pull
+docker compose up -d --build
+```
+
+- `uv sync` installe Evidently et passe pandas de la version 3 à la version 2 (voir « Fichiers »).
+- L'image de l'API est reconstruite : son `Dockerfile` change.
+
+### Fichiers
+
+| Fichier | Changement |
+| --- | --- |
+| `src/crop_recommendation_tp/simulate.py` | nouveau : commande `simulate`, des utilisateurs simulés |
+| `src/crop_recommendation_tp/drift.py` | nouveau : commande `drift`, comparaison du journal à l'entraînement |
+| `config/config.yaml` | réglages de la surveillance dans `monitoring` |
+| `pyproject.toml`, `uv.lock` | commandes `simulate` et `drift` ; groupe `monitoring` (Evidently) ; pandas 2 |
+| `Dockerfile.api` | `--no-default-groups` au lieu de `--no-dev` |
+| `logs/.gitkeep`, `.gitignore`, `.dockerignore` | dossier `logs/` présent mais vide dans Git ; `reports/` exclu |
+| `tests/test_simulate.py`, `tests/test_drift.py` | 7 nouveaux tests |
+
+**Pourquoi pandas 2.** La version actuelle d'Evidently (0.7) utilise une fonction interne de pandas supprimée dans pandas 3 : l'import échoue. On contraint donc pandas (`pandas>=2.3,<3`). C'est une situation courante : une bibliothèque en retard sur une autre impose sa contrainte au projet. `uv.lock` garantit que tout le monde a la même combinaison qui fonctionne.
+
+### Lecture : la configuration
+
+```yaml
+monitoring:
+    requests_log: logs/requests.jsonl
+    drift_report: reports/drift_report.html
+    min_requests: 50
+    drift_method: ks
+    drift_threshold: 0.05
+    drift_share: 0.1
+```
+
+- `min_requests` : en dessous de 50 requêtes, pas de conclusion. Sur 3 requêtes, un test ne peut rien dire.
+- `drift_threshold` : une variable est en dérive si sa p-value est inférieure à 0,05.
+- `drift_share` : part des variables en dérive qui déclenche l'alerte. 1 variable sur 7 (14 %) dépasse 0,1 : une seule suffit.
+
+### Lecture du code : `simulate.py`
+
+```python
+def build_requests(X_test, scenario, n, seed):
+    mesures = X_test.sample(n=n, replace=True, random_state=seed).reset_index(drop=True)
+    if scenario == "region-chaude":
+        mesures["temperature"] = mesures["temperature"] + 10
+    elif scenario == "secheresse":
+        mesures["rainfall"] = mesures["rainfall"] / 3
+    return mesures.round(1)
+```
+
+- Les parcelles viennent du **jeu de test** : réalistes, et jamais vues à l'entraînement.
+- `replace=True` : tirage avec remise, on peut demander plus de requêtes qu'il n'y a de parcelles.
+- `random_state=seed` : même tirage sur tous les postes, d'où des résultats identiques à ceux de ce manuel.
+- Scénario `concept` : aucune transformation. Dans l'histoire, la bonne réponse a changé (restriction d'eau, diapo 13), mais les mesures, elles, sont les mêmes.
+
+Le simulateur passe par l'API, comme une vraie application : les requêtes sont validées, prédites, puis journalisées. Il ne touche pas au journal.
+
+### Lecture du code : `drift.py`
+
+```python
+def load_reference(config):
+    X_train, _, _, _ = split_dataset(load_dataset(config), config)
+    return X_train.reset_index(drop=True)
+```
+
+- La référence est recalculée avec `split_dataset` (étape 3) : exactement les lignes d'entraînement, grâce à la graine.
+
+```python
+report = Report([DataDriftPreset(method="ks", threshold=0.05, drift_share=0.1)])
+snapshot = report.run(current_data=current, reference_data=reference)
+```
+
+- `DataDriftPreset` applique le test à chaque variable. Les valeurs viennent de la configuration.
+- `snapshot.save_html(...)` écrit le rapport ; `snapshot.dict()` donne les mêmes résultats sous forme de dictionnaire, lus par `summarize`.
+
+```python
+if resume["derive"]:
+    print("Dérive détectée : alerter, collecter de nouvelles données, réentraîner.")
+    sys.exit(1)
+```
+
+- **Code de sortie 1** en cas de dérive. Un programme qui lance `drift` chaque jour (tâche planifiée, CI) sait ainsi, sans lire le texte, qu'il faut alerter. C'est ce qui rendra la surveillance automatique en production.
+
+### Lecture : Evidently hors de l'image de l'API
+
+```toml
+[dependency-groups]
+monitoring = ["evidently>=0.7.23"]
+
+[tool.uv]
+default-groups = ["dev", "monitoring"]
+```
+
+```dockerfile
+RUN uv sync --locked --no-default-groups --no-install-project
+```
+
+- `uv sync` installe les groupes par défaut : `dev` et `monitoring`. Sur le poste et en CI, `drift` et ses tests fonctionnent.
+- L'API n'a pas besoin d'Evidently. `--no-dev` n'exclurait que le groupe `dev` ; `--no-default-groups` les exclut tous. L'image reste légère, et une bibliothèque de moins dans l'API, c'est une source de failles de moins.
+- `drift.py` est un module séparé de `monitoring.py` : l'API importe `monitoring.py` (journal), jamais `drift.py` (Evidently).
+
+### Manipulations
+
+Pile démarrée (`docker compose up -d`) et champion existant (étape 8). Pour chaque scénario :
+
+```bash
+docker compose exec api rm -f logs/requests.jsonl           # 1. vider le journal
+uv run simulate --scenario normal                             # 2. 200 requêtes
+docker compose cp api:app/logs/requests.jsonl logs/           # 3. copier le journal sur le poste
+uv run drift                                                  # 4. comparer
+```
+
+- Étape 1 : sans elle, les scénarios s'accumulent dans le journal et le rapport les mélange.
+- Étape 3 : le journal est dans le volume du conteneur ; `drift` tourne sur le poste. Dans `docker compose cp`, le chemin du conteneur part de sa racine (`app/logs/…`).
+
+**Résultats attendus** (graine 42) :
+
+| Scénario | Variables en dérive | Code de sortie | Cultures prédites |
+| --- | --- | --- | --- |
+| `normal` | aucune | 0 | banana, pomegranate, maize… |
+| `region-chaude` | `temperature` (p-value ≈ 3e-114) | 1 | **les mêmes** que `normal` |
+| `secheresse` | `rainfall` (p-value ≈ 2e-83) | 1 | changent : mothbeans, lentil… |
+| `concept` | aucune | 0 | les mêmes que `normal` |
+
+Ouvrir `reports/drift_report.html` dans un navigateur : histogramme de chaque variable, référence et données courantes superposées.
+
+Puis :
+
+5. **Fausse alerte** : vider le journal, `uv run simulate --scenario normal --seed 7`, copier, `uv run drift`. La variable `N` est signalée (p-value ≈ 0,05), alors que les parcelles viennent du même jeu que l'entraînement.
+6. **Trop peu de requêtes** : vider le journal, `uv run simulate --scenario region-chaude --n 20`, copier, `uv run drift` → « il en faut au moins 50 pour conclure ».
+7. Tests : `uv run pytest` → **41 passed**.
+
+### À observer
+
+- **Une dérive ne change pas forcément les prédictions.** Avec 10 °C de plus, le modèle prédit les mêmes cultures : il s'appuie peu sur la température. Avec trois fois moins de pluie, ses prédictions changent : `rainfall` est sa variable la plus importante (notebook, section 8). Une dérive dit que le modèle sort de son domaine connu, pas qu'il se trompe.
+- **Le concept drift est invisible.** Scénario `concept` : aucune alerte, alors que dans l'histoire, le riz n'est plus adapté. Seule la vérité terrain, après la récolte, le révélerait. C'est la limite de la diapo 13 : on surveille d'abord les entrées parce que c'est le seul signal disponible tôt.
+
+### Pièges fréquents
+
+| Symptôme | Cause | Solution |
+| --- | --- | --- |
+| `ImportError: cannot import name 'infer_dtype_from_object'` | pandas 3 installé avec Evidently 0.7 | `uv sync` (le verrou impose pandas 2) |
+| `API injoignable à http://127.0.0.1:8000` | pile arrêtée, ou API sur un autre port | `docker compose up -d` ; sinon `uv run simulate … --url http://127.0.0.1:8001` |
+| `0 requête(s) dans le journal` | journal non copié depuis le conteneur | `docker compose cp api:app/logs/requests.jsonl logs/` |
+| Le rapport mélange deux scénarios | journal non vidé entre les deux | `docker compose exec api rm -f logs/requests.jsonl` |
+
+### Limites, à discuter
+
+- **Tout le journal est comparé.** Dans un an, avec des milliers de requêtes, l'arrivée d'une nouvelle coopérative serait noyée dans l'historique, et une dérive passée resterait visible pour toujours. En production, on compare plutôt les requêtes récentes (par exemple les 30 derniers jours).
+- **Les requêtes sont saisonnières** (avant les semis). Une dérive détectée n'est pas toujours un problème : c'est peut-être le calendrier agricole.
+- **La référence n'a ni date ni région.** On ne sait pas de quand datent les données d'entraînement, ni d'où elles viennent : on constate seulement que les entrées s'en éloignent.
+
+### Questions de compréhension
+
+<details>
+<summary>1. Pourquoi comparer le journal au jeu d'entraînement, et pas au jeu de test ?</summary>
+
+La référence décrit ce que le modèle a appris. Le jeu de test, mis de côté, n'a pas servi à l'entraînement : ce n'est pas lui qui délimite le domaine connu du modèle. Le simulateur, lui, tire ses parcelles du jeu de test, pour envoyer des mesures réalistes mais jamais vues.
+</details>
+
+<details>
+<summary>2. Avec 10 °C de plus, les prédictions ne changent pas. La dérive est-elle alors sans importance ?</summary>
+
+Non. Le modèle n'a jamais vu de telles températures : personne ne sait si ses recommandations restent bonnes, et des cultures sensibles à la chaleur pourraient être recommandées à tort. La dérive signale une perte de garantie, pas une erreur constatée. Il faut des données étiquetées de cette région pour trancher.
+</details>
+
+<details>
+<summary>3. Pourquoi <code>drift</code> se termine-t-il avec un code de sortie 1 en cas de dérive ?</summary>
+
+Pour être utilisable par un autre programme : une tâche planifiée ou une CI teste le code de sortie, sans lire le texte, et déclenche une alerte. Par convention, 0 signifie « tout va bien ».
+</details>
+
+<details>
+<summary>4. Le scénario <code>concept</code> ne déclenche aucune alerte. Evidently est-il en défaut ?</summary>
+
+Non : il compare les entrées, et elles n'ont pas changé. Le concept drift change la relation entre les entrées et la bonne réponse ; il ne se voit qu'avec la vérité terrain, qui arrive tard. D'où l'intérêt de surveiller d'abord les entrées, seul signal disponible tôt, sans s'en contenter.
+</details>
+
+---
+
 ## Glossaire
 
 | Terme | Définition |
@@ -2337,8 +2548,10 @@ Le journal serait écrit dans le conteneur. Il survivrait à un `docker compose 
 | Empreinte md5 | identifiant calculé à partir du contenu d'un fichier |
 | Environnement virtuel | dossier `.venv` contenant Python et les bibliothèques du projet |
 | Étiquette Git (*tag*) | nom fixe donné à un commit |
+| Evidently | bibliothèque de surveillance de modèles : tests de dérive, rapports |
 | Expérience MLflow | groupe de runs comparables |
 | F1 macro | moyenne des scores F1 de chaque classe |
+| Fausse alerte | dérive signalée par le hasard, sans changement réel |
 | Fixture | fonction pytest qui prépare ce dont un test a besoin |
 | Graine aléatoire | valeur qui rend le hasard reproductible |
 | Hyperparamètre | réglage d'un modèle choisi avant l'entraînement |
@@ -2346,11 +2559,14 @@ Le journal serait écrit dans le conteneur. Il survivrait à un `docker compose 
 | Jeu de test | données mises de côté, utilisées une seule fois à la fin |
 | Journal des requêtes | fichier où l'API enregistre chaque prédiction : mesures, culture, version du modèle |
 | JSON Lines | format texte : un objet JSON par ligne |
+| Kolmogorov-Smirnov (test) | test qui compare deux échantillons d'une variable ; renvoie une p-value |
 | Métrique | résultat chiffré enregistré dans un run |
 | MLOps | pratiques qui rendent un projet de ML reproductible, traçable, vérifié et déployable |
 | Paramètre (MLflow) | réglage d'entrée enregistré dans un run |
+| p-value | probabilité d'un écart au moins aussi grand si rien n'a changé ; petite p-value : dérive |
 | Pli (*fold*) | une des parts du jeu d'entraînement en validation croisée |
 | Promotion | désignation d'un nouveau champion |
+| Référence (surveillance) | données auxquelles on compare les requêtes reçues : le jeu d'entraînement |
 | Registre de modèles | catalogue des versions de modèles retenues |
 | Run | exécution enregistrée dans MLflow |
 | Schéma | description des données attendues |
@@ -2406,6 +2622,8 @@ Le journal serait écrit dans le conteneur. Il survivrait à un `docker compose 
 | `uv run train` | entraînement d'un candidat | 5 |
 | `uv run promote` | promotion du meilleur modèle | 8 |
 | `uv run fastapi dev` | API en mode développement | 9 |
+| `uv run simulate --scenario <scénario>` | requêtes simulées envoyées à l'API | 12 |
+| `uv run drift` | comparaison du journal aux données d'entraînement | 12 |
 
 ### Docker
 
@@ -2416,5 +2634,7 @@ Le journal serait écrit dans le conteneur. Il survivrait à un `docker compose 
 | `docker compose logs --tail 20 <service>` | journal d'un service |
 | `docker compose restart api` | recharger le champion dans l'API |
 | `docker compose exec api tail -n 3 logs/requests.jsonl` | dernières requêtes journalisées (étape 11) |
+| `docker compose exec api rm -f logs/requests.jsonl` | vider le journal (étape 12) |
+| `docker compose cp api:app/logs/requests.jsonl logs/` | copier le journal sur le poste (étape 12) |
 | `docker compose down` | arrêter ; les données sont conservées |
 | `docker compose down -v` | arrêter et supprimer les données |

@@ -32,6 +32,7 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `etape-9` | API de prédiction | FastAPI : `/health`, `/predict` |
 | `etape-10` | API en conteneur | `Dockerfile.api`, service `api` dans Docker Compose |
 | `etape-11` | Journal des requêtes | chaque prédiction enregistrée dans `logs/requests.jsonl`, base de la surveillance de la dérive |
+| `etape-12` | Surveillance de la dérive | `uv run simulate` (scénarios d'utilisateurs), `uv run drift` (Evidently : journal comparé aux données d'entraînement) |
 
 ## Contenu
 
@@ -49,6 +50,8 @@ Les essais MLflow ne sont pas suivis par Git : ils sont conservés d'une étape 
 | `src/crop_recommendation_tp/promote.py` | Commande `promote` : choix du modèle champion |
 | `src/crop_recommendation_tp/api.py` | API de prédiction, qui sert le modèle champion |
 | `src/crop_recommendation_tp/monitoring.py` | Journal des requêtes de l'API : écriture et lecture |
+| `src/crop_recommendation_tp/simulate.py` | Commande `simulate` : envoie à l'API des parcelles du jeu de test, selon un scénario |
+| `src/crop_recommendation_tp/drift.py` | Commande `drift` : compare le journal aux données d'entraînement (Evidently) |
 | `data/raw/crop_recommendation.csv.dvc` | Étiquette DVC des données : empreinte md5 et taille |
 | `data/raw/crop_recommendation.csv` | Données (2 200 parcelles), gérées par DVC et ignorées par Git |
 | `.dvc/config` | Configuration de DVC, dont l'adresse du stockage |
@@ -252,6 +255,30 @@ Le chemin est réglé par `monitoring.requests_log` dans `config/config.yaml` ; 
 docker compose exec api tail -n 3 logs/requests.jsonl     # dernières requêtes reçues par le conteneur
 uv run python -c "from crop_recommendation_tp.config import load_config; from crop_recommendation_tp.monitoring import get_log_path, read_request_log; print(read_request_log(get_log_path(load_config())))"
 ```
+
+## Surveillance de la dérive
+
+`uv run drift` compare les 7 mesures du journal aux mêmes mesures du jeu d'entraînement, variable par variable (test de Kolmogorov-Smirnov, avec Evidently). Il écrit un rapport HTML et se termine avec le code 1 en cas de dérive, 0 sinon.
+
+```bash
+docker compose exec api rm -f logs/requests.jsonl           # vider le journal du conteneur
+uv run simulate --scenario region-chaude                      # 200 requêtes envoyées à l'API
+docker compose cp api:app/logs/requests.jsonl logs/           # copier le journal sur le poste
+uv run drift                                                  # → temperature : DÉRIVE
+```
+
+| Scénario | Requêtes envoyées | Résultat de `uv run drift` |
+| --- | --- | --- |
+| `normal` | parcelles du jeu de test | pas de dérive |
+| `region-chaude` | température + 10 °C | dérive de `temperature` |
+| `secheresse` | pluie divisée par 3 | dérive de `rainfall` |
+| `concept` | parcelles du jeu de test, inchangées | pas de dérive : le concept drift ne se voit pas dans les entrées |
+
+- Rapport : `reports/drift_report.html`, à ouvrir dans un navigateur.
+- Réglages dans `config/config.yaml`, rubrique `monitoring` : test, seuil de p-value, part de variables en dérive qui déclenche l'alerte, nombre minimal de requêtes.
+- `simulate` : `--n` (nombre de requêtes, 200), `--seed` (graine, 42), `--url` ou variable `API_URL` (adresse de l'API).
+- Evidently est dans le groupe de dépendances `monitoring`, installé par `uv sync` mais absent de l'image de l'API (`--no-default-groups`).
+- Evidently 0.7 ne fonctionne pas avec pandas 3 : le projet utilise pandas 2 (`pandas>=2.3,<3`).
 
 ## Tests et qualité du code
 

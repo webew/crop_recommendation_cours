@@ -12,6 +12,11 @@ mlflow:
     champion_alias: champion
 monitoring:
     requests_log: logs/requests.jsonl
+    drift_report: reports/drift_report.html
+    min_requests: 50 # en dessous, pas de conclusion
+    drift_method: ks # test de Kolmogorov-Smirnov, variable par variable
+    drift_threshold: 0.05 # dérive si la p-value est inférieure
+    drift_share: 0.1 # part de variables en dérive qui déclenche l'alerte : 1 sur 7 suffit
 model:
     params:
         n_estimators: 200

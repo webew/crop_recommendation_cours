@@ -7,14 +7,15 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
 # 1. Les dépendances seules : cette étape reste en cache tant que uv.lock ne change pas
+#    --no-default-groups : ni outils de développement (dev), ni surveillance (monitoring)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project
+RUN uv sync --locked --no-default-groups --no-install-project
 
 # 2. Le code et la configuration, puis le projet lui-même
 COPY README.md ./
 COPY src/ src/
 COPY config/ config/
-RUN uv sync --locked --no-dev
+RUN uv sync --locked --no-default-groups
 
 # 3. Exécution sans les droits d'administrateur ; logs/ reçoit le journal des requêtes
 RUN useradd --create-home app && mkdir logs && chown app:app logs
