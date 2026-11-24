@@ -305,7 +305,7 @@ Les tests utilisent de petits tableaux fabriqués et une base MLflow SQLite temp
 
 ## Intégration continue
 
-Le workflow `.github/workflows/ci.yml` s'exécute à chaque `push` et `pull_request`, sur une machine neuve. Il installe l'environnement exact (`uv sync --locked`), puis lance :
+Le workflow `.github/workflows/ci.yml` s'exécute à chaque `push` sur `main` ou d'un tag, et à chaque `pull_request`, sur une machine neuve. Les branches des pull requests sont testées une seule fois, par l'événement `pull_request`. Il installe l'environnement exact (`uv sync --locked`), puis lance :
 
 ```bash
 uv run ruff check .

@@ -1,7 +1,12 @@
 name: CI
 
 on:
+    # push : seulement main et les tags. Les branches des pull requests
+    # (celles de Dependabot comprises) sont testées par l'événement pull_request,
+    # ce qui évite de lancer la CI deux fois pour la même modification.
     push:
+        branches: [main]
+        tags: ["*"]
     pull_request:
 
 permissions:

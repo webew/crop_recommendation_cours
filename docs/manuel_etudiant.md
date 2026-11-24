@@ -2586,6 +2586,16 @@ Les étapes du job :
 | `docker/metadata-action` | calcule les étiquettes (`latest`, `etape-13`, `sha-…`) et les métadonnées (commit, dépôt) |
 | `docker/build-push-action` | construit `Dockerfile.api` et pousse l'image ; `cache-from/to: type=gha` réutilise les couches d'une exécution à l'autre |
 
+**Sur `main`, après l'étape 13.** Les déclencheurs ont été resserrés : `push` seulement sur `main` et les tags, en plus de `pull_request`. Avant, une PR de Dependabot lançait la CI deux fois, une fois pour sa branche (`push`) et une fois pour la PR (`pull_request`).
+
+```yaml
+on:
+    push:
+        branches: [main]
+        tags: ["*"]
+    pull_request:
+```
+
 C'est le même `Dockerfile.api` qu'en local (étape 10) : la CI ne fait rien de plus que `docker compose build api`, mais sur une machine neuve, à partir du code commité.
 
 ### Lecture : `compose.ghcr.yaml`
